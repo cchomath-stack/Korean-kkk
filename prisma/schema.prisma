@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  name      String?
+  role      String   @default("USER")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Passage {
+  id            Int        @id @default(autoincrement())
+  imageUrl      String?
+  ocrText       String?
+  year          Int?
+  month         Int?
+  grade         Int?
+  source        String?
+  office        String?    // 추가: 평가원, 교육청 등
+  startNo       Int?
+  endNo         Int?
+  questionRange String?
+  questions     Question[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model Question {
+  id           Int      @id @default(autoincrement())
+  passageId    Int?
+  passage      Passage? @relation(fields: [passageId], references: [id])
+  imageUrl     String
+  ocrText      String?
+  keywords     String?
+  answer       String?
+  difficulty   String?
+  questionNo   Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
