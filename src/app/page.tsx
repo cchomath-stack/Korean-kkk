@@ -59,6 +59,9 @@ export default function LandingPage() {
     <div className="min-h-screen bg-slate-50 font-sans relative">
       {/* Top Navigation / Admin Links */}
       <nav className="absolute top-0 right-0 p-6 z-50 flex gap-6 items-center">
+        <Link href="/help" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
+          사용설명서
+        </Link>
         <Link href="/admin/stats" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
           통계
         </Link>
