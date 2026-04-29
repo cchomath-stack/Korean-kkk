@@ -3,14 +3,27 @@ import { v4 as uuidv4 } from 'uuid';
 import { put } from '@vercel/blob';
 import { performOCRFromBuffer } from '@/lib/ocr';
 import sharp from 'sharp';
+import { requireAdmin } from '@/lib/session';
+
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024; // 15MB
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 export async function POST(request: NextRequest) {
+    if (!(await requireAdmin())) {
+        return NextResponse.json({ error: '관리자 권한이 필요합니다.' }, { status: 403 });
+    }
     try {
         const formData = await request.formData();
         const file = formData.get('file') as File | null;
 
         if (!file) {
             return NextResponse.json({ error: '파일이 없습니다.' }, { status: 400 });
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+            return NextResponse.json({ error: '이미지는 15MB 이하만 업로드 가능합니다.' }, { status: 413 });
+        }
+        if (file.type && !ALLOWED_IMAGE_TYPES.has(file.type)) {
+            return NextResponse.json({ error: '지원하지 않는 이미지 형식입니다.' }, { status: 400 });
         }
 
         const bytes = await file.arrayBuffer();

@@ -1,54 +1,86 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireUser } from '@/lib/session';
 
+const MAX_QUERY_LEN = 200;
+const MAX_TOKENS = 10;
+
+// 통합 검색: OCR 본문 + 태그 + 메타(영역/난이도/번호 등)를 한 번에
+// q는 공백/콤마로 토큰 분리. 각 토큰 앞 #를 떼고 처리. 모든 토큰이 하나의 결과에서 매치되어야 함 (AND).
 export async function GET(request: NextRequest) {
+    if (!(await requireUser())) {
+        return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+    }
     const { searchParams } = new URL(request.url);
-    const query = searchParams.get('q');
-    const mode = searchParams.get('mode') || 'CONTENT';
+    const query = (searchParams.get('q') || '').trim().slice(0, MAX_QUERY_LEN);
 
-    if (!query || query.length < 2) {
-        return NextResponse.json({ error: '최소 2글자 이상의 검색어를 입력하세요.' }, { status: 400 });
+    if (!query || query.length < 1) {
+        return NextResponse.json({ error: '검색어를 입력하세요.' }, { status: 400 });
+    }
+
+    const tokens = query
+        .split(/[,\s]+/)
+        .map((t) => t.replace(/^#/, '').trim())
+        .filter(Boolean)
+        .slice(0, MAX_TOKENS);
+
+    if (tokens.length === 0) {
+        return NextResponse.json({ passages: [], questions: [] });
     }
 
     try {
-        let passages: any[] = [];
-        let questions: any[] = [];
+        // 각 토큰별 OR 조건 (지문)
+        const passageWhere = {
+            AND: tokens.map((t) => ({
+                OR: [
+                    { ocrText: { contains: t } },
+                    { area: { contains: t } },
+                    { questionRange: { contains: t } },
+                    { tags: { some: { tag: { name: { contains: t } } } } },
+                    { images: { some: { ocrText: { contains: t } } } },
+                ],
+            })),
+        };
 
-        if (mode === 'CONTENT') {
-            // 본문 내용 검색 (OCR 텍스트 위주)
-            passages = await prisma.passage.findMany({
-                where: { ocrText: { contains: query } },
-                include: { questions: { orderBy: { questionNo: 'asc' } } },
-                take: 50
-            });
+        // 각 토큰별 OR 조건 (문제)
+        const questionWhere = {
+            AND: tokens.map((t) => ({
+                OR: [
+                    { ocrText: { contains: t } },
+                    { keywords: { contains: t } },
+                    { difficulty: { equals: t } },
+                    { tags: { some: { tag: { name: { contains: t } } } } },
+                    { passage: { is: { area: { contains: t } } } },
+                    { passage: { is: { ocrText: { contains: t } } } },
+                ],
+            })),
+        };
 
-            questions = await prisma.question.findMany({
-                where: { ocrText: { contains: query } },
-                include: { passage: true },
-                orderBy: { questionNo: 'asc' },
-                take: 50
-            });
-        } else {
-            // 문항 정보 검색 (키워드/태그, 출처, 번호 등)
-            questions = await prisma.question.findMany({
-                where: {
-                    OR: [
-                        { keywords: { contains: query } },
-                        { difficulty: { equals: query } },
-                        { passage: { is: { office: { contains: query } } } },
-                        { passage: { is: { questionRange: { contains: query } } } },
-                    ],
+        const [passages, questions] = await Promise.all([
+            prisma.passage.findMany({
+                where: passageWhere,
+                include: {
+                    questions: { orderBy: { questionNo: 'asc' } },
+                    images: { orderBy: { order: 'asc' } },
+                    tags: { include: { tag: true } },
                 },
-                include: { passage: true },
                 orderBy: { createdAt: 'desc' },
-                take: 100
-            });
+                take: 50,
+            }),
+            prisma.question.findMany({
+                where: questionWhere,
+                include: {
+                    passage: {
+                        include: { tags: { include: { tag: true } } },
+                    },
+                    tags: { include: { tag: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+                take: 100,
+            }),
+        ]);
 
-            // 정보 검색 시 지문은 해당 문제와 연계된 것 위주로 표시 (필요 시 내용 필터 추가 가능)
-            passages = [];
-        }
-
-        return NextResponse.json({ passages, questions });
+        return NextResponse.json({ passages, questions, tokens });
     } catch (error) {
         console.error('Search API Error:', error);
         return NextResponse.json({ error: '검색 처리 중 오류가 발생했습니다.' }, { status: 500 });

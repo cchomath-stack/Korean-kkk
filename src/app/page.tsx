@@ -1,16 +1,28 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Search, BookOpen, FileText, ChevronRight, Loader2, Info } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, FileText, ChevronRight, Loader2, Info } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 export default function LandingPage() {
   const [query, setQuery] = useState('');
-  const [searchMode, setSearchMode] = useState<'CONTENT' | 'INFO'>('CONTENT');
-  const [results, setResults] = useState<{ passages: any[], questions: any[] } | null>(null);
+  const [results, setResults] = useState<{ passages: any[], questions: any[], tokens?: string[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [me, setMe] = useState<{ id: number; email: string; name: string | null; role: string } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((r) => r.json())
+      .then((d) => setMe(d.user))
+      .catch(() => {});
+  }, []);
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    window.location.href = '/login';
+  };
 
   // Debounce search
   useEffect(() => {
@@ -21,7 +33,7 @@ export default function LandingPage() {
   }, [query]);
 
   useEffect(() => {
-    if (debouncedQuery.length >= 2) {
+    if (debouncedQuery.trim().length >= 1) {
       handleSearch(debouncedQuery);
     } else {
       setResults(null);
@@ -31,7 +43,7 @@ export default function LandingPage() {
   const handleSearch = async (q: string) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(q)}&mode=${searchMode}`);
+      const response = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
       const data = await response.json();
       if (response.ok) {
         setResults(data);
@@ -46,13 +58,42 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans relative">
       {/* Top Navigation / Admin Links */}
-      <nav className="absolute top-0 right-0 p-6 z-50 flex gap-6">
-        <Link href="/admin" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-          관리자페이지(데이터관리)
+      <nav className="absolute top-0 right-0 p-6 z-50 flex gap-6 items-center">
+        <Link href="/admin/stats" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
+          통계
         </Link>
-        <Link href="/admin/users" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-          관리자페이지(회원관리)
-        </Link>
+        {me?.role === 'ADMIN' && (
+          <>
+            <Link href="/admin/bulk" className="text-sm font-bold text-teal-700 hover:text-teal-900 transition-colors">
+              PDF 일괄입력
+            </Link>
+            <Link href="/admin" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
+              관리자페이지(데이터관리)
+            </Link>
+            <Link href="/admin/users" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
+              관리자페이지(회원관리)
+            </Link>
+          </>
+        )}
+        {me && (
+          <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
+            <span className="text-xs text-slate-500 font-medium">
+              {me.name || me.email}
+              <span className={cn(
+                "ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold",
+                me.role === 'ADMIN' ? "bg-red-50 text-red-600" : "bg-teal-50 text-teal-700"
+              )}>
+                {me.role === 'ADMIN' ? '관리자' : '일반회원'}
+              </span>
+            </span>
+            <button
+              onClick={handleLogout}
+              className="text-xs font-bold text-slate-500 hover:text-slate-900"
+            >
+              로그아웃
+            </button>
+          </div>
+        )}
       </nav>
 
       {/* Hero Section */}
@@ -89,34 +130,6 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Dual Search Mode Switcher */}
-          <div className="flex justify-center gap-1 mb-8 p-1.5 bg-slate-100 rounded-2xl w-fit mx-auto border border-slate-200 shadow-sm">
-            <button
-              onClick={() => setSearchMode('CONTENT')}
-              className={cn(
-                "px-8 py-3 rounded-xl text-base font-bold transition-all flex items-center gap-2",
-                searchMode === 'CONTENT'
-                  ? "bg-white text-teal-600 shadow-md"
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-              )}
-            >
-              <FileText className="w-5 h-5" />
-              지문/문제 검색하기
-            </button>
-            <button
-              onClick={() => setSearchMode('INFO')}
-              className={cn(
-                "px-8 py-3 rounded-xl text-base font-bold transition-all flex items-center gap-2",
-                searchMode === 'INFO'
-                  ? "bg-white text-teal-600 shadow-md"
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-              )}
-            >
-              <Info className="w-5 h-5" />
-              문항 정보 검색하기
-            </button>
-          </div>
-
           {/* Premium Search Bar */}
           <div className="relative max-w-2xl mx-auto group">
             <div className="absolute -inset-1 bg-gradient-to-r from-teal-500 to-blue-500 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-500" />
@@ -126,10 +139,7 @@ export default function LandingPage() {
               </div>
               <input
                 type="text"
-                placeholder={searchMode === 'CONTENT'
-                  ? "지문 내용이나 문제 속 텍스트를 검색하세요."
-                  : "해시태그, 시행처, 학년 등을 검색하세요."
-                }
+                placeholder="본문, 영역, #해시태그 등 자유롭게 검색"
                 className="flex-grow py-5 px-2 outline-none text-slate-700 text-xl font-medium"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -141,6 +151,9 @@ export default function LandingPage() {
                 {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : '찾기'}
               </button>
             </div>
+            <p className="text-xs text-slate-400 mt-3">
+              여러 키워드는 공백/콤마로 구분 (모두 일치 AND). 예: <code className="bg-slate-100 px-1.5 py-0.5 rounded">#문학 #2024</code> 또는 <code className="bg-slate-100 px-1.5 py-0.5 rounded">이집트 #비문학</code>
+            </p>
           </div>
         </div>
       </section>
@@ -210,9 +223,14 @@ export default function LandingPage() {
                           </span>
                         </div>
                         <div className="flex flex-wrap gap-1.5 mb-4 min-h-[22px]">
-                          {q.keywords?.split(',').map((tag: string) => (
+                          {(q.tags || []).map((qt: any) => (
+                            <span key={qt.tag.id} className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded-md text-[10px] font-bold border border-teal-200">
+                              #{qt.tag.name}
+                            </span>
+                          ))}
+                          {(!q.tags || q.tags.length === 0) && q.keywords?.split(',').filter(Boolean).map((tag: string) => (
                             <span key={tag} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-[10px] font-bold border border-slate-200">
-                              {tag}
+                              {tag.trim()}
                             </span>
                           ))}
                         </div>

@@ -2,12 +2,16 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Users, ArrowLeft, Trash2, Edit } from 'lucide-react';
+import { Users, ArrowLeft, Trash2, UserPlus, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function UserManagementPage() {
     const [users, setUsers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [showCreate, setShowCreate] = useState(false);
+    const [creating, setCreating] = useState(false);
+    const [createError, setCreateError] = useState('');
+    const [form, setForm] = useState({ email: '', password: '', name: '', role: 'USER' });
 
     const fetchUsers = async () => {
         setLoading(true);
@@ -55,6 +59,31 @@ export default function UserManagementPage() {
         }
     };
 
+    const handleCreate = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setCreating(true);
+        setCreateError('');
+        try {
+            const res = await fetch('/api/admin/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(form),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setShowCreate(false);
+                setForm({ email: '', password: '', name: '', role: 'USER' });
+                fetchUsers();
+            } else {
+                setCreateError(data.error || '생성 실패');
+            }
+        } catch (e) {
+            setCreateError('서버 오류');
+        } finally {
+            setCreating(false);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-50 p-8">
             <div className="max-w-5xl mx-auto">
@@ -77,9 +106,53 @@ export default function UserManagementPage() {
                     </Link>
                 </header>
 
+                {showCreate && (
+                    <div className="mb-6 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+                        <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <UserPlus className="w-4 h-4" /> 새 회원 추가
+                        </h3>
+                        {createError && (
+                            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm font-bold">{createError}</div>
+                        )}
+                        <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <input type="email" required placeholder="이메일"
+                                value={form.email}
+                                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none" />
+                            <input type="password" required minLength={8} placeholder="비밀번호 (8자+)"
+                                value={form.password}
+                                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none" />
+                            <input type="text" placeholder="이름 (선택)"
+                                value={form.name}
+                                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                                className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none" />
+                            <div className="flex gap-2">
+                                <select
+                                    value={form.role}
+                                    onChange={(e) => setForm({ ...form, role: e.target.value })}
+                                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none">
+                                    <option value="USER">일반회원</option>
+                                    <option value="ADMIN">관리자</option>
+                                </select>
+                                <button type="submit" disabled={creating}
+                                    className="px-4 py-2 bg-teal-600 text-white rounded-lg font-bold text-sm hover:bg-teal-700 disabled:opacity-50 flex items-center gap-1">
+                                    {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : '추가'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                )}
+
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                     <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                         <h2 className="font-bold text-slate-800">전체 사용자 목록</h2>
+                        <button
+                            onClick={() => { setShowCreate((s) => !s); setCreateError(''); }}
+                            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5"
+                        >
+                            <UserPlus className="w-4 h-4" /> {showCreate ? '닫기' : '회원 추가'}
+                        </button>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">

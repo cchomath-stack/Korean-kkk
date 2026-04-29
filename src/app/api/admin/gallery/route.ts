@@ -1,7 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireAdmin } from '@/lib/session';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
+    if (!(await requireAdmin())) {
+        return NextResponse.json({ error: '관리자 권한이 필요합니다.' }, { status: 403 });
+    }
     try {
         const questions = await prisma.question.findMany({
             take: 20,
@@ -11,8 +15,8 @@ export async function GET(request: NextRequest) {
             }
         });
         return NextResponse.json(questions);
-    } catch (error: any) {
+    } catch (error) {
         console.error('Gallery Fetch Error:', error);
-        return NextResponse.json({ error: '목록 조회 실패', details: error.message }, { status: 500 });
+        return NextResponse.json({ error: '목록 조회 실패' }, { status: 500 });
     }
 }

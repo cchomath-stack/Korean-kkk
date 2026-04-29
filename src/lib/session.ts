@@ -1,8 +1,14 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 
-const secretKey = process.env.JWT_SECRET || 'oreum-super-secret-key-123!';
-const key = new TextEncoder().encode(secretKey);
+const secretKey = process.env.JWT_SECRET;
+if (!secretKey || secretKey.length < 32) {
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_SECRET must be set to a 32+ character random string in production.');
+    }
+    console.warn('[session] JWT_SECRET is missing or too short — using insecure dev fallback. Set JWT_SECRET (32+ chars) before deploying.');
+}
+const key = new TextEncoder().encode(secretKey || 'oreum-dev-only-fallback-do-not-use-in-prod-32chars');
 
 export async function encrypt(payload: any) {
   return await new SignJWT(payload)
@@ -31,9 +37,23 @@ export async function createSession(userId: number, role: string) {
         expires,
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
+        sameSite: 'strict',
         path: '/',
     });
+}
+
+export async function requireAdmin() {
+    const session = await getSession();
+    if (!session?.userId || session.role !== 'ADMIN') {
+        return null;
+    }
+    return session;
+}
+
+export async function requireUser() {
+    const session = await getSession();
+    if (!session?.userId) return null;
+    return session;
 }
 
 export async function getSession() {

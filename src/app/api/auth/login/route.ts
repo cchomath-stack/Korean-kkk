@@ -15,14 +15,13 @@ export async function POST(request: NextRequest) {
             where: { email }
         });
 
-        if (!user) {
-            return NextResponse.json({ error: '등록되지 않은 계정입니다.' }, { status: 401 });
-        }
+        // 사용자 존재/비밀번호 불일치를 동일 메시지로 응답 (사용자 열거 방지)
+        // 사용자가 없을 때도 bcrypt 호출하여 타이밍 차이 최소화
+        const passwordHash = user?.password || '$2a$10$invaliddummyhashinvaliddummyhashinvaliddummyhashinva';
+        const isPasswordValid = await bcrypt.compare(password, passwordHash);
 
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-
-        if (!isPasswordValid) {
-            return NextResponse.json({ error: '비밀번호가 일치하지 않습니다.' }, { status: 401 });
+        if (!user || !isPasswordValid) {
+            return NextResponse.json({ error: '아이디 또는 비밀번호가 올바르지 않습니다.' }, { status: 401 });
         }
 
         // 로그인 성공, JWT 세션 쿠키 설정

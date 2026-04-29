@@ -15,19 +15,10 @@ export default function ViewerPage() {
     useEffect(() => {
         const fetchPassage = async () => {
             try {
-                const res = await fetch(`/api/admin/gallery`); // 전체 갤러리에서 찾거나 특정 ID 조회 API 필요
+                const res = await fetch(`/api/passage?id=${encodeURIComponent(passageId)}`);
                 if (res.ok) {
                     const data = await res.json();
-                    // 현재는 전체를 가져와서 필터링 (추후 개별 조회 API 권장)
-                    const found = data.find((item: any) => item.passageId === parseInt(passageId))?.passage;
-
-                    // 만약 갤러리 API가 문항 기준이라면 지문 정보를 따로 가져와야 함
-                    // 안정성을 위해 Passage 직접 조회 API 호출 (이미 있다면 사용)
-                    const directRes = await fetch(`/api/admin/passage?id=${passageId}`);
-                    if (directRes.ok) {
-                        const directData = await directRes.json();
-                        setPassage(directData);
-                    }
+                    setPassage(data);
                 }
             } catch (e) {
                 console.error('Fetch error', e);

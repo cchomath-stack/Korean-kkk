@@ -19,32 +19,110 @@ model User {
 }
 
 model Passage {
-  id            Int        @id @default(autoincrement())
-  imageUrl      String?
-  ocrText       String?
-  year          Int?
-  month         Int?
-  grade         Int?
-  source        String?
-  office        String?    // 추가: 평가원, 교육청 등
-  startNo       Int?
-  endNo         Int?
-  questionRange String?
-  questions     Question[]
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id              Int             @id @default(autoincrement())
+  imageUrl        String?         // legacy: 단일 이미지 URL. 새 코드는 images 사용
+  ocrText         String?
+  year            Int?
+  month           Int?
+  grade           Int?
+  source          String?
+  office          String?         // legacy
+  area            String?         // 문학 / 독서 / 화작 / 언매
+  startNo         Int?
+  endNo           Int?
+  questionRange   String?
+  pdfDocumentId   Int?
+  pdfDocument     PdfDocument?    @relation(fields: [pdfDocumentId], references: [id], onDelete: SetNull)
+  questions       Question[]
+  images          PassageImage[]
+  tags            PassageTag[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([pdfDocumentId])
+}
+
+model PassageImage {
+  id        Int      @id @default(autoincrement())
+  passageId Int
+  passage   Passage  @relation(fields: [passageId], references: [id], onDelete: Cascade)
+  imageUrl  String
+  ocrText   String?
+  order     Int      @default(0) // 단별 순서
+  pageNum   Int?     // 원본 PDF 페이지
+  boxX      Float?   // 원본 픽셀 좌표 (scale 2.0 기준)
+  boxY      Float?
+  boxW      Float?
+  boxH      Float?
+  createdAt DateTime @default(now())
+
+  @@index([passageId])
+}
+
+model PdfDocument {
+  id          Int        @id @default(autoincrement())
+  name        String
+  blobUrl     String     // Vercel Blob URL
+  fileHash    String     @unique // SHA-256 (중복 PDF 감지)
+  pageCount   Int?
+  uploadedById Int?
+  createdAt   DateTime   @default(now())
+  passages    Passage[]
+  questions   Question[]
+
+  @@index([createdAt])
 }
 
 model Question {
-  id           Int      @id @default(autoincrement())
-  passageId    Int?
-  passage      Passage? @relation(fields: [passageId], references: [id])
-  imageUrl     String
-  ocrText      String?
-  keywords     String?
-  answer       String?
-  difficulty   String?
-  questionNo   Int?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              Int           @id @default(autoincrement())
+  passageId       Int?
+  passage         Passage?      @relation(fields: [passageId], references: [id])
+  imageUrl        String
+  ocrText         String?
+  keywords        String?       // legacy
+  answer          String?
+  difficulty      String?
+  questionNo      Int?
+  pdfDocumentId   Int?
+  pdfDocument     PdfDocument?  @relation(fields: [pdfDocumentId], references: [id], onDelete: SetNull)
+  pageNum         Int?
+  boxX            Float?
+  boxY            Float?
+  boxW            Float?
+  boxH            Float?
+  tags            QuestionTag[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([pdfDocumentId])
+}
+
+model Tag {
+  id        Int           @id @default(autoincrement())
+  name      String        @unique
+  questions QuestionTag[]
+  passages  PassageTag[]
+  createdAt DateTime      @default(now())
+}
+
+model PassageTag {
+  passageId Int
+  tagId     Int
+  passage   Passage @relation(fields: [passageId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([passageId, tagId])
+  @@index([tagId])
+}
+
+model QuestionTag {
+  questionId Int
+  tagId      Int
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([questionId, tagId])
+  @@index([tagId])
 }

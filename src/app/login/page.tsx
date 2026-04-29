@@ -28,7 +28,10 @@ export default function LoginPage() {
             const res = await fetch('/api/auth/init', { method: 'POST' });
             const data = await res.json();
             if (res.ok) {
-                alert('초기 계정(admin / admin1234)이 생성되었습니다! 로그인해주세요.');
+                window.prompt(
+                    '초기 관리자 계정이 생성되었습니다.\n아래 비밀번호를 반드시 안전한 곳에 복사해두세요. (이 화면을 닫으면 다시 볼 수 없습니다)\n\n아이디: ' + data.email,
+                    data.password
+                );
                 setIsInitVisible(false);
             } else {
                 alert(data.error);
