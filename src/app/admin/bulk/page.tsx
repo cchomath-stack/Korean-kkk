@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
     Upload, FileText, Loader2, Home, ChevronLeft, ChevronRight,
     MousePointer2, Trash2, BookOpen, HelpCircle, RefreshCw, Plus, Link2,
-    Save, CheckCircle2, X
+    Save, CheckCircle2, X, ZoomIn, ZoomOut, RotateCcw
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -134,9 +134,157 @@ export default function BulkAdminPage() {
 
     const [drafting, setDrafting] = useState<Box | null>(null);
 
+    // PDF 페이지 줌 (50% ~ 200%)
+    const [zoom, setZoom] = useState(1);
+
+    // 렌더링 엔진: 기본 pdfjs(빠름), 호환모드 mupdf(form/annotation까지 평면 렌더)
+    const [renderer, setRenderer] = useState<'pdfjs' | 'mupdf'>('pdfjs');
+
+    // 엔진 전환 시 현재 PDF 재렌더링
+    const handleRendererChange = async (next: 'pdfjs' | 'mupdf') => {
+        if (next === renderer) return;
+        setRenderer(next);
+        if (!pdfDocumentId) return;
+        const doc = recentPdfs.find((d) => d.id === pdfDocumentId);
+        if (!doc) return;
+        if (!confirm(`렌더링 엔진을 "${next === 'mupdf' ? '호환모드(MuPDF)' : '기본(PDF.js)'}"로 전환하고 현재 PDF를 다시 그릴까요? (저장된 박스/카드는 유지됩니다)`)) {
+            return;
+        }
+        try {
+            const r = await fetch(doc.blobUrl);
+            if (!r.ok) throw new Error('PDF 다시 가져오기 실패');
+            const blob = await r.blob();
+            const file = new File([blob], doc.name, { type: 'application/pdf' });
+            // 그릴 페이지만 새로 만들고 박스/카드는 그대로 유지
+            const buf = await file.arrayBuffer();
+            await rerenderPagesOnly(buf, next);
+        } catch (e: any) {
+            alert('재렌더 실패: ' + e.message);
+        }
+    };
+
+    // 박스/카드는 유지하고 PDF 페이지 이미지만 다시 생성
+    const rerenderPagesOnly = async (buf: ArrayBuffer, engine: 'pdfjs' | 'mupdf') => {
+        setLoading(true);
+        setProgress(null);
+        const out: RenderedPage[] = [];
+        try {
+            if (engine === 'mupdf') {
+                const mupdf = await import('mupdf');
+                const document = (mupdf.Document as any).openDocument(buf, 'application/pdf');
+                const total = document.countPages();
+                const mat: any = [2, 0, 0, 2, 0, 0];
+                for (let i = 0; i < total; i++) {
+                    setProgress({ current: i + 1, total });
+                    const page: any = document.loadPage(i);
+                    const pixmap: any = page.toPixmap(mat, (mupdf as any).ColorSpace.DeviceRGB, false);
+                    const pngBytes: Uint8Array = pixmap.asPNG();
+                    const width: number = pixmap.getWidth();
+                    const height: number = pixmap.getHeight();
+                    const ab = new ArrayBuffer(pngBytes.byteLength);
+                    new Uint8Array(ab).set(pngBytes);
+                    const blob = new Blob([ab], { type: 'image/png' });
+                    const dataUrl = await new Promise<string>((res, rej) => {
+                        const reader = new FileReader();
+                        reader.onload = () => res(reader.result as string);
+                        reader.onerror = () => rej(new Error('blob → dataURL 실패'));
+                        reader.readAsDataURL(blob);
+                    });
+                    pixmap.destroy?.();
+                    page.destroy?.();
+                    out.push({ pageNum: i + 1, dataUrl, width, height });
+                    setPages([...out]);
+                }
+                document.destroy?.();
+            } else {
+                const pdf = await pdfjsRef.current.getDocument({
+                    data: buf,
+                    cMapUrl: '/pdfjs/cmaps/',
+                    cMapPacked: true,
+                    standardFontDataUrl: '/pdfjs/standard_fonts/',
+                    useSystemFonts: true,
+                }).promise;
+                const total = pdf.numPages;
+                for (let i = 1; i <= total; i++) {
+                    setProgress({ current: i, total });
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 2.0 });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width; canvas.height = viewport.height;
+                    const ctx = canvas.getContext('2d', { alpha: false });
+                    if (!ctx) throw new Error('Canvas 2D context 생성 실패');
+                    await page.render({
+                        canvasContext: ctx, viewport, canvas,
+                        annotationMode: 2, intent: 'print',
+                    } as any).promise;
+                    out.push({
+                        pageNum: i, dataUrl: canvas.toDataURL('image/png'),
+                        width: viewport.width, height: viewport.height,
+                    });
+                    setPages([...out]);
+                }
+            }
+        } finally {
+            setLoading(false);
+            setProgress(null);
+        }
+    };
+
+    // 미저장 작업이 있는지 (beforeunload + localStorage 드래프트용)
+    const hasUnsaved = useMemo(() => {
+        return cards.some((c) => c.status === 'ready' || c.status === 'error');
+    }, [cards]);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pdfjsRef = useRef<any>(null);
     const imgRef = useRef<HTMLImageElement>(null);
+    const pdfScrollRef = useRef<HTMLDivElement>(null);
+
+    // Ctrl/⌘ + 휠 → PDF 줌만 조절 (브라우저 전체 줌 차단)
+    // BOX 모드일 때 페이지 전체에서 동작 (메뉴/툴바 위에서 휠 돌려도 PDF가 줌됨)
+    useEffect(() => {
+        if (viewMode !== 'BOX') return;
+        const onWheel = (e: WheelEvent) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const step = e.deltaY > 0 ? -0.1 : 0.1;
+                setZoom((z) => Math.max(0.5, Math.min(2, +(z + step).toFixed(2))));
+            }
+        };
+        window.addEventListener('wheel', onWheel, { passive: false });
+        return () => window.removeEventListener('wheel', onWheel);
+    }, [viewMode]);
+
+    // 새로고침/탭 닫기 경고
+    useEffect(() => {
+        if (!hasUnsaved) return;
+        const onBeforeUnload = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            e.returnValue = '저장하지 않은 작업이 있습니다. 정말 떠나시겠습니까?';
+        };
+        window.addEventListener('beforeunload', onBeforeUnload);
+        return () => window.removeEventListener('beforeunload', onBeforeUnload);
+    }, [hasUnsaved]);
+
+    // localStorage에 드래프트 자동 저장 (PDF별 키)
+    useEffect(() => {
+        if (!pdfDocumentId) return;
+        if (cards.length === 0 && boxes.length === 0) return;
+        const key = `oreum-bulk-draft-${pdfDocumentId}`;
+        const draft = {
+            boxes,
+            cards: cards.map(({ previewUrl, ...rest }) => rest), // blob: URL 제외
+            passageMetas,
+            questionMetas,
+            activeGroupId,
+            savedAt: Date.now(),
+        };
+        try {
+            localStorage.setItem(key, JSON.stringify(draft));
+        } catch (e) {
+            // localStorage 가득 차거나 비활성화된 경우 — 무시
+        }
+    }, [pdfDocumentId, boxes, cards, passageMetas, questionMetas, activeGroupId]);
 
     // pdfjs 로드
     useEffect(() => {
@@ -207,33 +355,84 @@ export default function BulkAdminPage() {
                     return res.json();
                 })();
 
-            const pdf = await pdfjsRef.current.getDocument({ data: buf }).promise;
-            const total = pdf.numPages;
-            const rendered: RenderedPage[] = [];
-            for (let i = 1; i <= total; i++) {
-                setProgress({ current: i, total });
-                const page = await pdf.getPage(i);
-                const viewport = page.getViewport({ scale: 2.0 });
-                const canvas = document.createElement('canvas');
-                canvas.width = viewport.width; canvas.height = viewport.height;
-                const ctx = canvas.getContext('2d', { alpha: false });
-                if (!ctx) throw new Error('Canvas 2D context 생성 실패');
-                await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
-                rendered.push({
-                    pageNum: i, dataUrl: canvas.toDataURL('image/png'),
-                    width: viewport.width, height: viewport.height,
-                });
-                setPages([...rendered]);
+            let rendered: RenderedPage[] = [];
+
+            if (renderer === 'mupdf') {
+                // 호환 모드: MuPDF (form/annotation 포함 전체를 평면 비트맵으로)
+                const mupdf = await import('mupdf');
+                const doc = (mupdf.Document as any).openDocument(buf, 'application/pdf');
+                const total = doc.countPages();
+                const mat: any = [2, 0, 0, 2, 0, 0]; // 2x scale
+                for (let i = 0; i < total; i++) {
+                    setProgress({ current: i + 1, total });
+                    const page: any = doc.loadPage(i);
+                    const pixmap: any = page.toPixmap(mat, (mupdf as any).ColorSpace.DeviceRGB, false);
+                    const pngBytes: Uint8Array = pixmap.asPNG();
+                    const width: number = pixmap.getWidth();
+                    const height: number = pixmap.getHeight();
+                    // PNG bytes → dataURL
+                    // ArrayBufferLike 차이 회피용 새 ArrayBuffer 사본
+                    const buffer = new ArrayBuffer(pngBytes.byteLength);
+                    new Uint8Array(buffer).set(pngBytes);
+                    const blob = new Blob([buffer], { type: 'image/png' });
+                    const dataUrl = await new Promise<string>((res, rej) => {
+                        const reader = new FileReader();
+                        reader.onload = () => res(reader.result as string);
+                        reader.onerror = () => rej(new Error('blob → dataURL 실패'));
+                        reader.readAsDataURL(blob);
+                    });
+                    if (typeof pixmap.destroy === 'function') pixmap.destroy();
+                    if (typeof page.destroy === 'function') page.destroy();
+                    rendered.push({ pageNum: i + 1, dataUrl, width, height });
+                    setPages([...rendered]);
+                }
+                if (typeof doc.destroy === 'function') doc.destroy();
+            } else {
+                // 기본 모드: PDF.js (빠름)
+                const pdf = await pdfjsRef.current.getDocument({
+                    data: buf,
+                    cMapUrl: '/pdfjs/cmaps/',
+                    cMapPacked: true,
+                    standardFontDataUrl: '/pdfjs/standard_fonts/',
+                    useSystemFonts: true,
+                }).promise;
+                const total = pdf.numPages;
+                for (let i = 1; i <= total; i++) {
+                    setProgress({ current: i, total });
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 2.0 });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width; canvas.height = viewport.height;
+                    const ctx = canvas.getContext('2d', { alpha: false });
+                    if (!ctx) throw new Error('Canvas 2D context 생성 실패');
+                    await page.render({
+                        canvasContext: ctx,
+                        viewport,
+                        canvas,
+                        annotationMode: 2,
+                        intent: 'print',
+                    } as any).promise;
+                    rendered.push({
+                        pageNum: i, dataUrl: canvas.toDataURL('image/png'),
+                        width: viewport.width, height: viewport.height,
+                    });
+                    setPages([...rendered]);
+                }
             }
             setCurrentPage(1);
 
             const uploaded = await uploadPromise;
+            const finalDocId = uploaded?.id ?? opts?.docId ?? null;
             if (uploaded?.id) {
                 setPdfDocumentId(uploaded.id);
                 if (uploaded.deduped) {
                     // 동일 PDF — 저장된 카드들 자동 복원
                     await restoreSavedFromPdf(uploaded.id, rendered);
                 }
+            }
+            // localStorage 드래프트 복원 시도 (저장 안 된 박스들)
+            if (finalDocId) {
+                await tryRestoreLocalDraft(finalDocId);
             }
         } catch (e: any) {
             console.error(e);
@@ -243,6 +442,53 @@ export default function BulkAdminPage() {
             setProgress(null);
         }
     }, []);
+
+    // localStorage 드래프트 복원: 저장 안 된 박스들을 다시 띄움
+    const tryRestoreLocalDraft = async (docId: number) => {
+        try {
+            const key = `oreum-bulk-draft-${docId}`;
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            const draft = JSON.parse(raw);
+            // 미저장 카드만 추리기 (이미 DB에 있는 카드는 restoreSavedFromPdf 가 가져옴)
+            const unsavedCards = (draft.cards || []).filter((c: any) => c.status !== 'saved');
+            if (unsavedCards.length === 0) {
+                localStorage.removeItem(key);
+                return;
+            }
+            const ageMin = Math.round((Date.now() - (draft.savedAt || 0)) / 60000);
+            const ok = confirm(
+                `이전에 저장하지 않은 작업이 있습니다.\n` +
+                `미저장 카드 ${unsavedCards.length}개 (${ageMin}분 전)\n\n` +
+                `복원할까요? (취소 = 영구 삭제)`
+            );
+            if (!ok) {
+                localStorage.removeItem(key);
+                return;
+            }
+            // 미저장 카드/박스만 가져와 머지
+            const unsavedIds = new Set(unsavedCards.map((c: any) => c.id));
+            const unsavedBoxes = (draft.boxes || []).filter((b: any) => unsavedIds.has(b.id));
+            // previewUrl 은 blob: URL이 살아있지 않으므로 imageUrl(Vercel Blob)로 대체
+            const rehydrated = unsavedCards.map((c: any) => ({
+                ...c,
+                previewUrl: c.imageUrl || '',
+            }));
+            setCards((prev) => [...prev, ...rehydrated]);
+            setBoxes((prev) => [...prev, ...unsavedBoxes]);
+            if (draft.passageMetas) {
+                setPassageMetas((prev) => ({ ...prev, ...draft.passageMetas }));
+            }
+            if (draft.questionMetas) {
+                setQuestionMetas((prev) => ({ ...prev, ...draft.questionMetas }));
+            }
+            if (draft.activeGroupId) {
+                setActiveGroupId(draft.activeGroupId);
+            }
+        } catch (e) {
+            console.error('Local draft restore failed', e);
+        }
+    };
 
     // 기존 PDF의 저장된 카드들을 큐로 복원 + 페이지 위 회색 박스 표시
     const restoreSavedFromPdf = async (docId: number, _renderedPages: RenderedPage[]) => {
@@ -662,6 +908,23 @@ export default function BulkAdminPage() {
                             <FileText size={14} /> {pdfName}
                         </span>
                     )}
+                    {/* 렌더링 엔진 토글: 깨지는 PDF는 호환모드(MuPDF)로 */}
+                    <div className="flex items-center gap-1 ml-3 bg-slate-100 rounded-md p-0.5">
+                        <button
+                            onClick={() => handleRendererChange('pdfjs')}
+                            className={`text-[11px] px-2 py-1 rounded font-bold ${renderer === 'pdfjs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                            title="기본: 빠른 PDF.js 렌더링"
+                        >
+                            기본
+                        </button>
+                        <button
+                            onClick={() => handleRendererChange('mupdf')}
+                            className={`text-[11px] px-2 py-1 rounded font-bold ${renderer === 'mupdf' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                            title="호환모드: MuPDF — 일부 PDF(form/annotation 포함)가 기본 모드에서 깨질 때 사용"
+                        >
+                            호환모드
+                        </button>
+                    </div>
                 </div>
                 <div className="flex items-center gap-2">
                     {pages.length > 0 && (
@@ -743,9 +1006,9 @@ export default function BulkAdminPage() {
                     </aside>
 
                     {/* Center: 페이지 (전체 너비 활용) */}
-                    <main className="flex-1 overflow-auto bg-slate-100 flex flex-col items-center">
+                    <main ref={pdfScrollRef} className="flex-1 overflow-auto bg-slate-100 flex flex-col items-center">
                         <div className="sticky top-0 z-30 w-full px-4 py-3 bg-slate-100/95 backdrop-blur flex flex-col items-center gap-2 shadow-sm">
-                            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg shadow-sm border">
+                            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg shadow-sm border flex-wrap justify-center">
                                 <button onClick={goPrev} disabled={currentPage <= 1} className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronLeft size={16} /></button>
                                 <span className="text-sm font-medium text-slate-700 w-20 text-center">{currentPage} / {pages.length}</span>
                                 <button onClick={goNext} disabled={currentPage >= pages.length} className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronRight size={16} /></button>
@@ -754,6 +1017,31 @@ export default function BulkAdminPage() {
                                 <ModeButton active={drawMode === 'PASSAGE_EXTEND'} color="indigo" icon={<Plus size={14} />} label="지문 이어 (2)" onClick={() => setDrawMode('PASSAGE_EXTEND')} disabled={!activeGroupId} />
                                 <ModeButton active={drawMode === 'QUESTION'} color="orange" icon={<HelpCircle size={14} />} label="문제 (3)" onClick={() => setDrawMode('QUESTION')} />
                                 <ModeButton active={drawMode === 'IDLE'} color="slate" icon={<MousePointer2 size={14} />} label="보기 (0)" onClick={() => setDrawMode('IDLE')} />
+                                <div className="w-px h-6 bg-slate-200 mx-2" />
+                                <button
+                                    onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}
+                                    className="p-1.5 rounded hover:bg-slate-100 text-slate-600"
+                                    title="축소"
+                                >
+                                    <ZoomOut size={14} />
+                                </button>
+                                <span className="text-xs font-bold text-slate-700 w-12 text-center tabular-nums">
+                                    {Math.round(zoom * 100)}%
+                                </span>
+                                <button
+                                    onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
+                                    className="p-1.5 rounded hover:bg-slate-100 text-slate-600"
+                                    title="확대"
+                                >
+                                    <ZoomIn size={14} />
+                                </button>
+                                <button
+                                    onClick={() => setZoom(1)}
+                                    className="p-1.5 rounded hover:bg-slate-100 text-slate-400"
+                                    title="원래대로"
+                                >
+                                    <RotateCcw size={13} />
+                                </button>
                             </div>
                             <div className="text-xs flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border shadow-sm">
                                 <Link2 size={12} className={activeGroup ? 'text-teal-600' : 'text-slate-300'} />
@@ -771,8 +1059,11 @@ export default function BulkAdminPage() {
                         </div>
 
                         {current ? (
-                            <div className="relative inline-block select-none my-4">
-                                <img ref={imgRef} src={current.dataUrl} alt={`page-${currentPage}`} className="max-w-full shadow-lg bg-white block" draggable={false} />
+                            <div
+                                className="relative select-none my-4"
+                                style={{ width: `${zoom * 100}%`, maxWidth: 'none' }}
+                            >
+                                <img ref={imgRef} src={current.dataUrl} alt={`page-${currentPage}`} className="w-full shadow-lg bg-white block" draggable={false} />
                                 <svg
                                     className={`absolute inset-0 w-full h-full ${drawMode === 'IDLE' ? 'cursor-default' : 'cursor-crosshair'}`}
                                     onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
@@ -1295,15 +1586,6 @@ function NumField({ label, value, onChange, disabled }: { label: string; value?:
         <label className="block">
             <div className="text-xs font-semibold text-slate-600 mb-1">{label}</div>
             <input type="number" value={value || ''} onChange={(e) => onChange(e.target.value)} disabled={disabled}
-                className={`w-full text-sm border rounded px-2.5 py-1.5 focus:outline-none focus:border-teal-500 ${disabled ? 'bg-slate-50 text-slate-500' : 'bg-white text-slate-900'}`} />
-        </label>
-    );
-}
-function TextField({ label, value, onChange, disabled, placeholder }: { label: string; value?: string; onChange: (v: string) => void; disabled?: boolean; placeholder?: string; }) {
-    return (
-        <label className="block">
-            <div className="text-xs font-semibold text-slate-600 mb-1">{label}</div>
-            <input type="text" value={value || ''} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder}
                 className={`w-full text-sm border rounded px-2.5 py-1.5 focus:outline-none focus:border-teal-500 ${disabled ? 'bg-slate-50 text-slate-500' : 'bg-white text-slate-900'}`} />
         </label>
     );

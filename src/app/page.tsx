@@ -58,7 +58,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans relative">
       {/* Top Navigation / Admin Links */}
-      <nav className="absolute top-0 right-0 p-6 z-50 flex gap-6 items-center">
+      <nav className="absolute top-0 right-0 p-6 z-50 flex flex-wrap gap-x-5 gap-y-2 items-center justify-end max-w-[calc(100%-3rem)]">
         <Link href="/help" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
           사용설명서
         </Link>
@@ -70,11 +70,14 @@ export default function LandingPage() {
             <Link href="/admin/bulk" className="text-sm font-bold text-teal-700 hover:text-teal-900 transition-colors">
               PDF 일괄입력
             </Link>
+            <Link href="/admin/passages" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
+              지문 관리
+            </Link>
             <Link href="/admin" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              관리자페이지(데이터관리)
+              데이터 관리
             </Link>
             <Link href="/admin/users" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              관리자페이지(회원관리)
+              회원 관리
             </Link>
           </>
         )}

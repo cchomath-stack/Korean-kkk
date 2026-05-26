@@ -86,18 +86,41 @@ export async function PUT(request: NextRequest) {
     if (!(await requireAdmin())) return FORBIDDEN;
     try {
         const body = await request.json();
-        const { id, ...data } = body;
-
+        const { id, tags, ...rest } = body;
         if (!id) return NextResponse.json({ error: 'ID가 필요합니다.' }, { status: 400 });
+        const passageId = parseInt(String(id));
+
+        // 허용된 필드만 화이트리스트 처리 (임의 컬럼 주입 차단)
+        const allowed = ['ocrText', 'year', 'month', 'grade', 'source', 'area', 'startNo', 'endNo', 'questionRange'] as const;
+        const data: any = {};
+        for (const k of allowed) {
+            if (k in rest) {
+                const v = (rest as any)[k];
+                if (k === 'year' || k === 'month' || k === 'grade' || k === 'startNo' || k === 'endNo') {
+                    data[k] = v === '' || v == null ? null : parseInt(String(v));
+                } else {
+                    data[k] = v === '' ? null : v;
+                }
+            }
+        }
+        if (data.startNo != null && data.endNo != null && !data.questionRange) {
+            data.questionRange = `${data.startNo}~${data.endNo}`;
+        }
+
+        // 태그 갱신 (배열이 들어왔을 때만)
+        if (Array.isArray(tags)) {
+            await prisma.passageTag.deleteMany({ where: { passageId } });
+            const cleaned = [...new Set(tags.map((n: string) => String(n).trim()).filter(Boolean))];
+            for (const name of cleaned) {
+                const t = await prisma.tag.upsert({ where: { name }, update: {}, create: { name } });
+                await prisma.passageTag.create({ data: { passageId, tagId: t.id } });
+            }
+        }
 
         const updated = await prisma.passage.update({
-            where: { id: parseInt(String(id)) },
-            data: {
-                ...data,
-                year: data.year ? parseInt(String(data.year)) : null,
-                month: data.month ? parseInt(String(data.month)) : null,
-                grade: data.grade ? parseInt(String(data.grade)) : null,
-            }
+            where: { id: passageId },
+            data,
+            include: { tags: { include: { tag: true } } },
         });
         return NextResponse.json(updated);
     } catch (error) {

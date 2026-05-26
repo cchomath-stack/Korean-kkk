@@ -75,8 +75,8 @@ export default function LoginPage() {
         <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
             <div className="max-w-sm w-full bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
                 <div className="text-center mb-8">
-                    <h1 className="text-2xl font-black text-slate-800 tracking-tight">모의고사 검색기</h1>
-                    <p className="text-slate-500 mt-2 text-sm font-medium">관리자 권한으로 로그인해주세요.</p>
+                    <h1 className="text-2xl font-black text-slate-800 tracking-tight">오름국어 모의고사 검색기</h1>
+                    <p className="text-slate-500 mt-2 text-sm font-medium">로그인 후 이용 가능합니다.</p>
                 </div>
 
                 {error && (
