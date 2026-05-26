@@ -137,103 +137,6 @@ export default function BulkAdminPage() {
     // PDF 페이지 줌 (50% ~ 200%)
     const [zoom, setZoom] = useState(1);
 
-    // 렌더링 엔진: 기본 pdfjs(빠름), 호환모드 mupdf(form/annotation까지 평면 렌더)
-    const [renderer, setRenderer] = useState<'pdfjs' | 'mupdf'>('pdfjs');
-
-    // 엔진 전환 시 현재 PDF 재렌더링
-    const handleRendererChange = async (next: 'pdfjs' | 'mupdf') => {
-        if (next === renderer) return;
-        setRenderer(next);
-        if (!pdfDocumentId) return;
-        const doc = recentPdfs.find((d) => d.id === pdfDocumentId);
-        if (!doc) return;
-        if (!confirm(`렌더링 엔진을 "${next === 'mupdf' ? '호환모드(MuPDF)' : '기본(PDF.js)'}"로 전환하고 현재 PDF를 다시 그릴까요? (저장된 박스/카드는 유지됩니다)`)) {
-            return;
-        }
-        try {
-            const r = await fetch(doc.blobUrl);
-            if (!r.ok) throw new Error('PDF 다시 가져오기 실패');
-            const blob = await r.blob();
-            const file = new File([blob], doc.name, { type: 'application/pdf' });
-            // 그릴 페이지만 새로 만들고 박스/카드는 그대로 유지
-            const buf = await file.arrayBuffer();
-            await rerenderPagesOnly(buf, next);
-        } catch (e: any) {
-            alert('재렌더 실패: ' + e.message);
-        }
-    };
-
-    // 박스/카드는 유지하고 PDF 페이지 이미지만 다시 생성
-    const rerenderPagesOnly = async (buf: ArrayBuffer, engine: 'pdfjs' | 'mupdf') => {
-        setLoading(true);
-        setProgress(null);
-        const out: RenderedPage[] = [];
-        try {
-            if (engine === 'mupdf') {
-                const mupdf: any = await import(
-                    /* webpackIgnore: true */
-                    /* @vite-ignore */
-                    /* turbopackIgnore: true */
-                    '/mupdf/mupdf.js' as any
-                );
-                const document = (mupdf.Document as any).openDocument(buf, 'application/pdf');
-                const total = document.countPages();
-                const mat: any = [2, 0, 0, 2, 0, 0];
-                for (let i = 0; i < total; i++) {
-                    setProgress({ current: i + 1, total });
-                    const page: any = document.loadPage(i);
-                    const pixmap: any = page.toPixmap(mat, (mupdf as any).ColorSpace.DeviceRGB, false);
-                    const pngBytes: Uint8Array = pixmap.asPNG();
-                    const width: number = pixmap.getWidth();
-                    const height: number = pixmap.getHeight();
-                    const ab = new ArrayBuffer(pngBytes.byteLength);
-                    new Uint8Array(ab).set(pngBytes);
-                    const blob = new Blob([ab], { type: 'image/png' });
-                    const dataUrl = await new Promise<string>((res, rej) => {
-                        const reader = new FileReader();
-                        reader.onload = () => res(reader.result as string);
-                        reader.onerror = () => rej(new Error('blob → dataURL 실패'));
-                        reader.readAsDataURL(blob);
-                    });
-                    pixmap.destroy?.();
-                    page.destroy?.();
-                    out.push({ pageNum: i + 1, dataUrl, width, height });
-                    setPages([...out]);
-                }
-                document.destroy?.();
-            } else {
-                const pdf = await pdfjsRef.current.getDocument({
-                    data: buf,
-                    cMapUrl: '/pdfjs/cmaps/',
-                    cMapPacked: true,
-                    standardFontDataUrl: '/pdfjs/standard_fonts/',
-                    useSystemFonts: true,
-                }).promise;
-                const total = pdf.numPages;
-                for (let i = 1; i <= total; i++) {
-                    setProgress({ current: i, total });
-                    const page = await pdf.getPage(i);
-                    const viewport = page.getViewport({ scale: 2.0 });
-                    const canvas = document.createElement('canvas');
-                    canvas.width = viewport.width; canvas.height = viewport.height;
-                    const ctx = canvas.getContext('2d', { alpha: false });
-                    if (!ctx) throw new Error('Canvas 2D context 생성 실패');
-                    await page.render({
-                        canvasContext: ctx, viewport, canvas,
-                        annotationMode: 2, intent: 'print',
-                    } as any).promise;
-                    out.push({
-                        pageNum: i, dataUrl: canvas.toDataURL('image/png'),
-                        width: viewport.width, height: viewport.height,
-                    });
-                    setPages([...out]);
-                }
-            }
-        } finally {
-            setLoading(false);
-            setProgress(null);
-        }
-    };
 
     // 미저장 작업이 있는지 (beforeunload + localStorage 드래프트용)
     const hasUnsaved = useMemo(() => {
@@ -241,7 +144,6 @@ export default function BulkAdminPage() {
     }, [cards]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const pdfjsRef = useRef<any>(null);
     const imgRef = useRef<HTMLImageElement>(null);
     const pdfScrollRef = useRef<HTMLDivElement>(null);
 
@@ -291,17 +193,6 @@ export default function BulkAdminPage() {
         }
     }, [pdfDocumentId, boxes, cards, passageMetas, questionMetas, activeGroupId]);
 
-    // pdfjs 로드
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            const pdfjs = await import('pdfjs-dist');
-            pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-            if (!cancelled) pdfjsRef.current = pdfjs;
-        })();
-        return () => { cancelled = true; };
-    }, []);
-
     // 최근 PDF 목록 로드
     useEffect(() => {
         (async () => {
@@ -333,10 +224,6 @@ export default function BulkAdminPage() {
 
     // PDF 처리 (file: 사용자가 선택한 파일, opts.skipUpload + opts.docId: 기존 PDF 복원 시)
     const handleFile = useCallback(async (file: File, opts?: { skipUpload?: boolean; docId?: number }) => {
-        if (!pdfjsRef.current) {
-            setError('PDF 라이브러리 로딩 중. 잠시 후 다시.');
-            return;
-        }
         setError('');
         setLoading(true);
         setPages([]); setBoxes([]); setCards([]);
@@ -360,76 +247,41 @@ export default function BulkAdminPage() {
                     return res.json();
                 })();
 
-            let rendered: RenderedPage[] = [];
+            const rendered: RenderedPage[] = [];
 
-            if (renderer === 'mupdf') {
-                // 호환 모드: MuPDF (form/annotation 포함 전체를 평면 비트맵으로)
-                // /public/mupdf 에 둔 mupdf.js를 번들러 우회로 동적 로드
-                const mupdf: any = await import(
-                    /* webpackIgnore: true */
-                    /* @vite-ignore */
-                    /* turbopackIgnore: true */
-                    '/mupdf/mupdf.js' as any
-                );
-                const doc = (mupdf.Document as any).openDocument(buf, 'application/pdf');
-                const total = doc.countPages();
-                const mat: any = [2, 0, 0, 2, 0, 0]; // 2x scale
-                for (let i = 0; i < total; i++) {
-                    setProgress({ current: i + 1, total });
-                    const page: any = doc.loadPage(i);
-                    const pixmap: any = page.toPixmap(mat, (mupdf as any).ColorSpace.DeviceRGB, false);
-                    const pngBytes: Uint8Array = pixmap.asPNG();
-                    const width: number = pixmap.getWidth();
-                    const height: number = pixmap.getHeight();
-                    // PNG bytes → dataURL
-                    // ArrayBufferLike 차이 회피용 새 ArrayBuffer 사본
-                    const buffer = new ArrayBuffer(pngBytes.byteLength);
-                    new Uint8Array(buffer).set(pngBytes);
-                    const blob = new Blob([buffer], { type: 'image/png' });
-                    const dataUrl = await new Promise<string>((res, rej) => {
-                        const reader = new FileReader();
-                        reader.onload = () => res(reader.result as string);
-                        reader.onerror = () => rej(new Error('blob → dataURL 실패'));
-                        reader.readAsDataURL(blob);
-                    });
-                    if (typeof pixmap.destroy === 'function') pixmap.destroy();
-                    if (typeof page.destroy === 'function') page.destroy();
-                    rendered.push({ pageNum: i + 1, dataUrl, width, height });
-                    setPages([...rendered]);
-                }
-                if (typeof doc.destroy === 'function') doc.destroy();
-            } else {
-                // 기본 모드: PDF.js (빠름)
-                const pdf = await pdfjsRef.current.getDocument({
-                    data: buf,
-                    cMapUrl: '/pdfjs/cmaps/',
-                    cMapPacked: true,
-                    standardFontDataUrl: '/pdfjs/standard_fonts/',
-                    useSystemFonts: true,
-                }).promise;
-                const total = pdf.numPages;
-                for (let i = 1; i <= total; i++) {
-                    setProgress({ current: i, total });
-                    const page = await pdf.getPage(i);
-                    const viewport = page.getViewport({ scale: 2.0 });
-                    const canvas = document.createElement('canvas');
-                    canvas.width = viewport.width; canvas.height = viewport.height;
-                    const ctx = canvas.getContext('2d', { alpha: false });
-                    if (!ctx) throw new Error('Canvas 2D context 생성 실패');
-                    await page.render({
-                        canvasContext: ctx,
-                        viewport,
-                        canvas,
-                        annotationMode: 2,
-                        intent: 'print',
-                    } as any).promise;
-                    rendered.push({
-                        pageNum: i, dataUrl: canvas.toDataURL('image/png'),
-                        width: viewport.width, height: viewport.height,
-                    });
-                    setPages([...rendered]);
-                }
+            // MuPDF로 form/annotation 포함 전체를 평면 비트맵으로 렌더링
+            // /public/mupdf 에 둔 mupdf.js를 번들러 우회로 동적 로드
+            const mupdf: any = await import(
+                /* webpackIgnore: true */
+                /* @vite-ignore */
+                /* turbopackIgnore: true */
+                '/mupdf/mupdf.js' as any
+            );
+            const doc = (mupdf.Document as any).openDocument(buf, 'application/pdf');
+            const total = doc.countPages();
+            const mat: any = [2, 0, 0, 2, 0, 0]; // 2x scale
+            for (let i = 0; i < total; i++) {
+                setProgress({ current: i + 1, total });
+                const page: any = doc.loadPage(i);
+                const pixmap: any = page.toPixmap(mat, (mupdf as any).ColorSpace.DeviceRGB, false);
+                const pngBytes: Uint8Array = pixmap.asPNG();
+                const width: number = pixmap.getWidth();
+                const height: number = pixmap.getHeight();
+                const buffer = new ArrayBuffer(pngBytes.byteLength);
+                new Uint8Array(buffer).set(pngBytes);
+                const blob = new Blob([buffer], { type: 'image/png' });
+                const dataUrl = await new Promise<string>((res, rej) => {
+                    const reader = new FileReader();
+                    reader.onload = () => res(reader.result as string);
+                    reader.onerror = () => rej(new Error('blob → dataURL 실패'));
+                    reader.readAsDataURL(blob);
+                });
+                if (typeof pixmap.destroy === 'function') pixmap.destroy();
+                if (typeof page.destroy === 'function') page.destroy();
+                rendered.push({ pageNum: i + 1, dataUrl, width, height });
+                setPages([...rendered]);
             }
+            if (typeof doc.destroy === 'function') doc.destroy();
             setCurrentPage(1);
 
             const uploaded = await uploadPromise;
@@ -919,23 +771,6 @@ export default function BulkAdminPage() {
                             <FileText size={14} /> {pdfName}
                         </span>
                     )}
-                    {/* 렌더링 엔진 토글: 깨지는 PDF는 호환모드(MuPDF)로 */}
-                    <div className="flex items-center gap-1 ml-3 bg-slate-100 rounded-md p-0.5">
-                        <button
-                            onClick={() => handleRendererChange('pdfjs')}
-                            className={`text-[11px] px-2 py-1 rounded font-bold ${renderer === 'pdfjs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                            title="기본: 빠른 PDF.js 렌더링"
-                        >
-                            기본
-                        </button>
-                        <button
-                            onClick={() => handleRendererChange('mupdf')}
-                            className={`text-[11px] px-2 py-1 rounded font-bold ${renderer === 'mupdf' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                            title="호환모드: MuPDF — 일부 PDF(form/annotation 포함)가 기본 모드에서 깨질 때 사용"
-                        >
-                            호환모드
-                        </button>
-                    </div>
                 </div>
                 <div className="flex items-center gap-2">
                     {pages.length > 0 && (
