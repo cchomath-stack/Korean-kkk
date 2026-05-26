@@ -91,6 +91,7 @@ model Question {
   boxW            Float?
   boxH            Float?
   tags            QuestionTag[]
+  grammarCategories QuestionGrammarCategory[]
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -125,4 +126,28 @@ model QuestionTag {
 
   @@id([questionId, tagId])
   @@index([tagId])
+}
+
+model GrammarCategory {
+  id        Int                       @id @default(autoincrement())
+  name      String
+  parentId  Int?
+  parent    GrammarCategory?          @relation("GrammarHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children  GrammarCategory[]         @relation("GrammarHierarchy")
+  order     Int                       @default(0)
+  questions QuestionGrammarCategory[]
+  createdAt DateTime                  @default(now())
+
+  @@index([parentId])
+}
+
+model QuestionGrammarCategory {
+  questionId Int
+  categoryId Int
+  question   Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  category   GrammarCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime        @default(now())
+
+  @@id([questionId, categoryId])
+  @@index([categoryId])
 }

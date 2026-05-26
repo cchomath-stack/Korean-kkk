@@ -59,6 +59,15 @@ type QuestionMeta = {
     answer?: string;
     difficulty?: string; // 상 / 중 / 하
     tags: string[];
+    grammarCategoryIds?: number[]; // 문법(어법) 카테고리 다중 선택
+};
+
+type GrammarTreeNode = {
+    id: number;
+    name: string;
+    order: number;
+    count: number;
+    children?: GrammarTreeNode[];
 };
 
 const AREAS = ['문학', '독서', '화작', '언매'] as const;
@@ -200,6 +209,20 @@ export default function BulkAdminPage() {
                 const res = await fetch('/api/admin/pdf');
                 if (res.ok) setRecentPdfs(await res.json());
             } catch (e) { console.error('recent pdfs fetch failed', e); }
+        })();
+    }, []);
+
+    // 문법 카테고리 트리 로드 (입력 화면에서 사용)
+    const [grammarTree, setGrammarTree] = useState<GrammarTreeNode[]>([]);
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await fetch('/api/grammar/categories');
+                if (res.ok) {
+                    const data = await res.json();
+                    setGrammarTree(data.tree || []);
+                }
+            } catch (e) { console.error('grammar tree fetch failed', e); }
         })();
     }, []);
 
@@ -404,6 +427,7 @@ export default function BulkAdminPage() {
                     answer: q.answer || undefined,
                     difficulty: q.difficulty || undefined,
                     tags: (q.tags || []).map((t: any) => t.tag.name),
+                    grammarCategoryIds: (q.grammarCategories || []).map((g: any) => g.category?.id ?? g.categoryId),
                 };
                 const cardId = `pdf-q-${q.id}`;
                 restoredCards.push({
@@ -735,6 +759,7 @@ export default function BulkAdminPage() {
                 answer: meta.answer,
                 difficulty: meta.difficulty,
                 tags: meta.tags,
+                grammarCategoryIds: meta.grammarCategoryIds || [],
                 pageNum: card.pageNum,
                 boxX: box?.x, boxY: box?.y, boxW: box?.w, boxH: box?.h,
             };
@@ -989,6 +1014,7 @@ export default function BulkAdminPage() {
                                                 passageMeta={passageMetas[g.groupId] || { tags: [] }}
                                                 questionMetas={questionMetas}
                                                 canMerge={canMerge}
+                                                grammarTree={grammarTree}
                                                 onDelete={deleteCard}
                                                 onRetry={retryCard}
                                                 onOcrChange={updateCardOcr}
@@ -1197,7 +1223,7 @@ function TagInput({ tags, onChange, disabled }: { tags: string[]; onChange: (t: 
 
 // ─── GroupInputCard (입력 모드용 큰 카드) ─────────────────────────────
 function GroupInputCard({
-    group, savedPassageId, passageMeta, questionMetas, canMerge,
+    group, savedPassageId, passageMeta, questionMetas, canMerge, grammarTree,
     onDelete, onRetry, onOcrChange,
     onPassageMetaChange, onQuestionMetaChange,
     onSaveGroup, onSaveQuestion, onMergeIntoPrevious,
@@ -1207,6 +1233,7 @@ function GroupInputCard({
     passageMeta: PassageMeta;
     questionMetas: Record<string, QuestionMeta>;
     canMerge: boolean;
+    grammarTree: GrammarTreeNode[];
     onDelete: (id: string) => void;
     onRetry: (id: string) => void;
     onOcrChange: (id: string, text: string) => void;
@@ -1302,6 +1329,7 @@ function GroupInputCard({
                     key={c.id} card={c} kind="question" badge="문제"
                     questionMeta={questionMetas[c.id] || { tags: [] }}
                     canSaveQuestion={passageSaved || c.id === c.groupId}
+                    grammarTree={grammarTree}
                     onDelete={() => onDelete(c.id)}
                     onRetry={() => onRetry(c.id)}
                     onOcrChange={(t) => onOcrChange(c.id, t)}
@@ -1316,7 +1344,7 @@ function GroupInputCard({
 // ─── BigImageCard (입력 모드 단일 카드) ────────────────────────────────
 function BigImageCard({
     card, badge, kind,
-    questionMeta, canSaveQuestion,
+    questionMeta, canSaveQuestion, grammarTree,
     onDelete, onRetry, onOcrChange, onMetaChange, onSave,
 }: {
     card: QueueCard;
@@ -1324,6 +1352,7 @@ function BigImageCard({
     kind: 'passage' | 'question';
     questionMeta?: QuestionMeta;
     canSaveQuestion?: boolean;
+    grammarTree?: GrammarTreeNode[];
     onDelete: () => void;
     onRetry: () => void;
     onOcrChange: (text: string) => void;
@@ -1407,6 +1436,12 @@ function BigImageCard({
                                         <div className="text-xs font-semibold text-slate-500 mb-1">문제 태그</div>
                                         <TagInput tags={questionMeta.tags} onChange={(t) => onMetaChange({ tags: t })} disabled={saved} />
                                     </div>
+                                    <GrammarPickerInline
+                                        tree={grammarTree || []}
+                                        selectedIds={questionMeta.grammarCategoryIds || []}
+                                        onChange={(ids) => onMetaChange({ grammarCategoryIds: ids })}
+                                        disabled={saved}
+                                    />
                                     {!saved && (
                                         <button onClick={onSave}
                                             disabled={card.status !== 'ready' || saving || !canSaveQuestion}
@@ -1471,6 +1506,139 @@ function AnswerPicker({ value, onChange, disabled }: { value?: string; onChange:
                     </button>
                 );
             })}
+        </div>
+    );
+}
+
+// ─── GrammarPickerInline (문법 카테고리 다중 선택) ────────────────────
+function GrammarPickerInline({
+    tree, selectedIds, onChange, disabled,
+}: {
+    tree: GrammarTreeNode[];
+    selectedIds: number[];
+    onChange: (ids: number[]) => void;
+    disabled?: boolean;
+}) {
+    const [enabled, setEnabled] = useState<boolean>(selectedIds.length > 0);
+    const [open, setOpen] = useState(false);
+
+    useEffect(() => {
+        // 외부에서 선택값이 채워지면 토글 자동 ON
+        if (selectedIds.length > 0 && !enabled) setEnabled(true);
+    }, [selectedIds.length, enabled]);
+
+    const allLeafById = useMemo(() => {
+        const map = new Map<number, { name: string; parentName: string }>();
+        for (const root of tree) {
+            for (const c of root.children || []) {
+                map.set(c.id, { name: c.name, parentName: root.name });
+            }
+        }
+        return map;
+    }, [tree]);
+
+    const toggle = (id: number) => {
+        if (disabled) return;
+        if (selectedIds.includes(id)) onChange(selectedIds.filter((x) => x !== id));
+        else onChange([...selectedIds, id]);
+    };
+
+    const handleEnabledChange = (next: boolean) => {
+        setEnabled(next);
+        if (!next) {
+            onChange([]);
+            setOpen(false);
+        } else {
+            setOpen(true);
+        }
+    };
+
+    return (
+        <div className="border-t pt-3">
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer select-none">
+                <input
+                    type="checkbox"
+                    checked={enabled}
+                    disabled={disabled}
+                    onChange={(e) => handleEnabledChange(e.target.checked)}
+                    className="accent-purple-600"
+                />
+                문법(어법) 문제
+                {enabled && (
+                    <span className="text-[10px] font-medium text-slate-400">
+                        {selectedIds.length > 0 ? `· ${selectedIds.length}개 선택` : '· 카테고리 미선택'}
+                    </span>
+                )}
+            </label>
+
+            {enabled && (
+                <div className="mt-2">
+                    {/* 선택된 칩들 */}
+                    <div className="flex flex-wrap gap-1.5 mb-2 min-h-[24px]">
+                        {selectedIds.map((id) => {
+                            const info = allLeafById.get(id);
+                            if (!info) return null;
+                            return (
+                                <span key={id}
+                                    className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-300">
+                                    {info.parentName} / {info.name}
+                                    {!disabled && (
+                                        <button onClick={() => toggle(id)} className="text-purple-600 hover:text-purple-900">×</button>
+                                    )}
+                                </span>
+                            );
+                        })}
+                        {selectedIds.length === 0 && (
+                            <span className="text-[11px] text-slate-400">아직 선택된 카테고리 없음</span>
+                        )}
+                    </div>
+
+                    {!disabled && (
+                        <button
+                            type="button"
+                            onClick={() => setOpen((v) => !v)}
+                            className="text-xs px-2 py-1 rounded border border-purple-300 text-purple-700 hover:bg-purple-50 font-bold"
+                        >
+                            {open ? '카테고리 닫기' : '카테고리 선택'}
+                        </button>
+                    )}
+
+                    {open && !disabled && (
+                        <div className="mt-2 border rounded-lg p-3 bg-slate-50 max-h-64 overflow-y-auto">
+                            {tree.length === 0 ? (
+                                <div className="text-xs text-slate-400">카테고리가 없습니다. 관리자 페이지에서 추가하세요.</div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {tree.map((root) => (
+                                        <div key={root.id}>
+                                            <div className="text-[11px] font-black text-slate-700 mb-1">{root.name}</div>
+                                            <div className="grid grid-cols-2 gap-1">
+                                                {(root.children || []).map((c) => {
+                                                    const checked = selectedIds.includes(c.id);
+                                                    return (
+                                                        <label key={c.id}
+                                                            className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded cursor-pointer ${
+                                                                checked ? 'bg-purple-100 text-purple-900 font-bold' : 'hover:bg-white text-slate-700'
+                                                            }`}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={checked}
+                                                                onChange={() => toggle(c.id)}
+                                                                className="accent-purple-600"
+                                                            />
+                                                            {c.name}
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

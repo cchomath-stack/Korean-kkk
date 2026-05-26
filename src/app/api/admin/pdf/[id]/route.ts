@@ -24,6 +24,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
                 questions: {
                     include: {
                         tags: { include: { tag: true } },
+                        grammarCategories: { include: { category: true } },
                     },
                 },
             },

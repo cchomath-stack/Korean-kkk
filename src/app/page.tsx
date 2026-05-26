@@ -62,6 +62,9 @@ export default function LandingPage() {
         <Link href="/help" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
           사용설명서
         </Link>
+        <Link href="/grammar" className="text-sm font-bold text-purple-700 hover:text-purple-900 transition-colors">
+          문법문제 찾기
+        </Link>
         <Link href="/admin/stats" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
           통계
         </Link>
@@ -72,6 +75,9 @@ export default function LandingPage() {
             </Link>
             <Link href="/admin/passages" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
               지문 관리
+            </Link>
+            <Link href="/admin/grammar" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
+              문법 카테고리
             </Link>
             <Link href="/admin" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
               데이터 관리

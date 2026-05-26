@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
             passageId, imageUrl, ocrText,
             keywords, answer, difficulty, questionNo,
             tags, // string[]
+            grammarCategoryIds, // number[]
             pdfDocumentId,
             pageNum, boxX, boxY, boxW, boxH,
         } = body;
@@ -20,6 +21,10 @@ export async function POST(request: NextRequest) {
         if (!imageUrl) {
             return NextResponse.json({ error: '이미지 URL이 필요합니다.' }, { status: 400 });
         }
+
+        const grammarCatIds = Array.isArray(grammarCategoryIds)
+            ? [...new Set(grammarCategoryIds.map((v: any) => parseInt(String(v), 10)).filter((n: number) => !Number.isNaN(n)))]
+            : [];
 
         const question = await prisma.question.create({
             data: {
@@ -41,8 +46,16 @@ export async function POST(request: NextRequest) {
                         create: await connectTagsForQuestion(tags),
                     },
                 }),
+                ...(grammarCatIds.length > 0 && {
+                    grammarCategories: {
+                        create: grammarCatIds.map((cid) => ({ categoryId: cid })),
+                    },
+                }),
             },
-            include: { tags: { include: { tag: true } } },
+            include: {
+                tags: { include: { tag: true } },
+                grammarCategories: { include: { category: true } },
+            },
         });
 
         return NextResponse.json(question);
@@ -70,16 +83,51 @@ export async function PUT(request: NextRequest) {
     if (!(await requireAdmin())) return FORBIDDEN;
     try {
         const body = await request.json();
-        const { id, ...data } = body;
-
+        const { id, tags, grammarCategoryIds, ...rest } = body;
         if (!id) return NextResponse.json({ error: 'ID가 필요합니다.' }, { status: 400 });
+        const qid = parseInt(String(id), 10);
+
+        const allowed = ['ocrText', 'answer', 'difficulty', 'questionNo', 'keywords'] as const;
+        const data: any = {};
+        for (const k of allowed) {
+            if (k in rest) {
+                const v = (rest as any)[k];
+                if (k === 'questionNo') {
+                    data[k] = v === '' || v == null ? null : parseInt(String(v), 10);
+                } else {
+                    data[k] = v === '' ? null : v;
+                }
+            }
+        }
+
+        // 태그 갱신
+        if (Array.isArray(tags)) {
+            await prisma.questionTag.deleteMany({ where: { questionId: qid } });
+            const cleaned = [...new Set(tags.map((n: string) => String(n).trim()).filter(Boolean))];
+            for (const name of cleaned) {
+                const t = await prisma.tag.upsert({ where: { name }, update: {}, create: { name } });
+                await prisma.questionTag.create({ data: { questionId: qid, tagId: t.id } });
+            }
+        }
+
+        // 문법 카테고리 갱신
+        if (Array.isArray(grammarCategoryIds)) {
+            await prisma.questionGrammarCategory.deleteMany({ where: { questionId: qid } });
+            const ids = [...new Set(grammarCategoryIds.map((v: any) => parseInt(String(v), 10)).filter((n: number) => !Number.isNaN(n)))];
+            if (ids.length > 0) {
+                await prisma.questionGrammarCategory.createMany({
+                    data: ids.map((cid) => ({ questionId: qid, categoryId: cid })),
+                });
+            }
+        }
 
         const updated = await prisma.question.update({
-            where: { id: parseInt(String(id)) },
-            data: {
-                ...data,
-                questionNo: data.questionNo ? parseInt(String(data.questionNo)) : null,
-            }
+            where: { id: qid },
+            data,
+            include: {
+                tags: { include: { tag: true } },
+                grammarCategories: { include: { category: true } },
+            },
         });
         return NextResponse.json(updated);
     } catch (error) {
