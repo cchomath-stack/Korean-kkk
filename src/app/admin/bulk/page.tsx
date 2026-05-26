@@ -170,7 +170,12 @@ export default function BulkAdminPage() {
         const out: RenderedPage[] = [];
         try {
             if (engine === 'mupdf') {
-                const mupdf = await import('mupdf');
+                const mupdf: any = await import(
+                    /* webpackIgnore: true */
+                    /* @vite-ignore */
+                    /* turbopackIgnore: true */
+                    '/mupdf/mupdf.js' as any
+                );
                 const document = (mupdf.Document as any).openDocument(buf, 'application/pdf');
                 const total = document.countPages();
                 const mat: any = [2, 0, 0, 2, 0, 0];
@@ -359,7 +364,13 @@ export default function BulkAdminPage() {
 
             if (renderer === 'mupdf') {
                 // 호환 모드: MuPDF (form/annotation 포함 전체를 평면 비트맵으로)
-                const mupdf = await import('mupdf');
+                // /public/mupdf 에 둔 mupdf.js를 번들러 우회로 동적 로드
+                const mupdf: any = await import(
+                    /* webpackIgnore: true */
+                    /* @vite-ignore */
+                    /* turbopackIgnore: true */
+                    '/mupdf/mupdf.js' as any
+                );
                 const doc = (mupdf.Document as any).openDocument(buf, 'application/pdf');
                 const total = doc.countPages();
                 const mat: any = [2, 0, 0, 2, 0, 0]; // 2x scale
