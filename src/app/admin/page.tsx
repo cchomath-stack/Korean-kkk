@@ -218,6 +218,85 @@ export default function AdminPage() {
         }
     };
 
+    // ─── 드래그 선택 ─────────────────────────────────
+    const gridRef = useRef<HTMLDivElement>(null);
+    const dragStateRef = useRef<{
+        startX: number; startY: number;
+        mode: 'replace' | 'add' | 'toggle';
+        baseline: Set<number>;
+    } | null>(null);
+    const [dragRect, setDragRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+
+    const handleGridMouseDown = (e: React.MouseEvent) => {
+        // 빈 영역에서만 드래그 시작 (카드 위에서 누르면 무시 — 카드 클릭/체크박스 등이랑 충돌 안 나게)
+        if (e.target !== e.currentTarget) return;
+        if (e.button !== 0) return;
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const startX = e.clientX - rect.left;
+        const startY = e.clientY - rect.top;
+        const mode: 'replace' | 'add' | 'toggle' = e.shiftKey ? 'add' : (e.ctrlKey || e.metaKey) ? 'toggle' : 'replace';
+        dragStateRef.current = { startX, startY, mode, baseline: new Set(selectedIds) };
+        setDragRect({ x1: startX, y1: startY, x2: startX, y2: startY });
+        e.preventDefault();
+    };
+
+    useEffect(() => {
+        if (!dragRect) return;
+        const onMove = (e: MouseEvent) => {
+            const grid = gridRef.current;
+            const st = dragStateRef.current;
+            if (!grid || !st) return;
+            const rect = grid.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const x1 = Math.min(st.startX, x);
+            const y1 = Math.min(st.startY, y);
+            const x2 = Math.max(st.startX, x);
+            const y2 = Math.max(st.startY, y);
+            setDragRect({ x1, y1, x2, y2 });
+
+            // 교차 카드 ID 수집
+            const inRect = new Set<number>();
+            const cards = grid.querySelectorAll('[data-card-id]');
+            cards.forEach((cd) => {
+                const r = (cd as HTMLElement).getBoundingClientRect();
+                const cx1 = r.left - rect.left;
+                const cy1 = r.top - rect.top;
+                const cx2 = r.right - rect.left;
+                const cy2 = r.bottom - rect.top;
+                if (cx1 < x2 && cx2 > x1 && cy1 < y2 && cy2 > y1) {
+                    const id = parseInt(cd.getAttribute('data-card-id') || '', 10);
+                    if (!Number.isNaN(id)) inRect.add(id);
+                }
+            });
+
+            // 모드에 따라 결합
+            let next: Set<number>;
+            if (st.mode === 'replace') {
+                next = inRect;
+            } else if (st.mode === 'add') {
+                next = new Set([...st.baseline, ...inRect]);
+            } else {
+                next = new Set(st.baseline);
+                for (const id of inRect) {
+                    if (st.baseline.has(id)) next.delete(id);
+                    else next.add(id);
+                }
+            }
+            setSelectedIds(next);
+        };
+        const onUp = () => {
+            dragStateRef.current = null;
+            setDragRect(null);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        return () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+        };
+    }, [dragRect]);
+
     // 일괄: 삭제
     const bulkDelete = async () => {
         if (selectedIds.size === 0) return;
@@ -913,7 +992,9 @@ export default function AdminPage() {
                             <span className="text-sm font-bold pl-2">
                                 {selectedIds.size}개 선택됨
                             </span>
-                            <span className="text-[10px] text-slate-400">Ctrl+A 전체 · Shift+클릭 범위 · Esc 해제</span>
+                            <span className="text-[10px] text-slate-400">
+                                빈 영역 드래그 · Ctrl+A 전체 · Shift+클릭 범위 · Esc 해제
+                            </span>
                             <div className="ml-auto flex items-center gap-2">
                                 <button onClick={() => setSelectedIds(new Set(gallery.map((g) => g.id)))}
                                     className="px-3 py-1.5 text-xs font-bold rounded bg-slate-700 hover:bg-slate-600">
@@ -936,7 +1017,24 @@ export default function AdminPage() {
                         </div>
                     )}
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                    <div
+                        ref={gridRef}
+                        onMouseDown={handleGridMouseDown}
+                        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 relative select-none"
+                        style={{ minHeight: '200px' }}
+                    >
+                        {dragRect && (
+                            <div
+                                className="absolute pointer-events-none border-2 border-teal-500 bg-teal-500/15 rounded"
+                                style={{
+                                    left: dragRect.x1,
+                                    top: dragRect.y1,
+                                    width: dragRect.x2 - dragRect.x1,
+                                    height: dragRect.y2 - dragRect.y1,
+                                    zIndex: 20,
+                                }}
+                            />
+                        )}
                         {gallery.map((item) => {
                             // 새 tags 관계 우선, 없으면 legacy keywords CSV fallback
                             const tagNames: string[] = (item.tags && item.tags.length > 0)
@@ -946,6 +1044,7 @@ export default function AdminPage() {
                             const isSelected = selectedIds.has(item.id);
                             return (
                                 <div key={item.id}
+                                    data-card-id={item.id}
                                     className={`bg-white rounded-xl shadow-md border-2 overflow-hidden group transition-all ${
                                         isSelected ? 'border-teal-500 ring-2 ring-teal-300' : 'border-slate-100 hover:ring-2 hover:ring-teal-500'
                                     }`}>
@@ -1024,7 +1123,7 @@ export default function AdminPage() {
             {bulkGrammarOpen && (
                 <BulkGrammarModal
                     tree={grammarTree}
-                    selectedCount={selectedIds.size}
+                    selectedItems={gallery.filter((g) => selectedIds.has(g.id))}
                     onClose={() => setBulkGrammarOpen(false)}
                     onSave={(ids) => bulkAssignGrammar(ids)}
                 />
@@ -1033,7 +1132,7 @@ export default function AdminPage() {
             {/* 일괄 삭제 확인 모달 */}
             {bulkDeleteOpen && (
                 <BulkDeleteConfirmModal
-                    count={selectedIds.size}
+                    selectedItems={gallery.filter((g) => selectedIds.has(g.id))}
                     onClose={() => setBulkDeleteOpen(false)}
                     onConfirm={bulkDelete}
                 />
@@ -1044,10 +1143,10 @@ export default function AdminPage() {
 
 // 일괄 문법 추가 모달 (병합 동작 — 기존 카테고리 유지하며 추가)
 function BulkGrammarModal({
-    tree, selectedCount, onClose, onSave,
+    tree, selectedItems, onClose, onSave,
 }: {
     tree: any[];
-    selectedCount: number;
+    selectedItems: any[];
     onClose: () => void;
     onSave: (ids: number[]) => void;
 }) {
@@ -1055,46 +1154,72 @@ function BulkGrammarModal({
     const toggle = (id: number) => {
         setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
     };
+    // Esc 닫기 + Ctrl+S 저장
+    React.useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+            else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (selected.length > 0) onSave(selected);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [selected, onClose, onSave]);
+
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-                <div className="px-5 py-4 border-b">
-                    <h3 className="font-black text-slate-900 text-base mb-1">
-                        문법 카테고리 일괄 추가
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                        선택한 <b className="text-purple-700">{selectedCount}개 문항</b>에 아래 카테고리를 <b>추가</b>합니다. (기존 카테고리는 유지)
-                    </p>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b flex items-center justify-between">
+                    <div>
+                        <h3 className="font-black text-slate-900 text-base mb-1">
+                            문법 카테고리 일괄 추가
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                            <b className="text-purple-700">{selectedItems.length}개 문항</b>에 카테고리를 <b>추가</b>합니다. (기존 유지)
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="text-slate-400 hover:text-slate-900 text-2xl leading-none" title="ESC">×</button>
                 </div>
-                <div className="overflow-y-auto p-5 space-y-4 flex-1">
-                    {tree.length === 0 ? (
-                        <div className="text-sm text-slate-400">카테고리가 없습니다.</div>
-                    ) : tree.map((root: any) => (
-                        <div key={root.id}>
-                            <div className="text-xs font-black text-slate-700 mb-1.5">{root.name}</div>
-                            <div className="grid grid-cols-2 gap-1">
-                                {(root.children || []).map((c: any) => {
-                                    const checked = selected.includes(c.id);
-                                    return (
-                                        <label key={c.id}
-                                            className={`flex items-center gap-1.5 text-sm px-2 py-1.5 rounded cursor-pointer ${
-                                                checked ? 'bg-purple-100 text-purple-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
-                                            }`}>
-                                            <input type="checkbox" checked={checked} onChange={() => toggle(c.id)} className="accent-purple-600" />
-                                            {c.name}
-                                        </label>
-                                    );
-                                })}
+
+                <div className="flex flex-1 min-h-0">
+                    {/* 좌: 카테고리 트리 */}
+                    <div className="flex-1 overflow-y-auto p-5 space-y-4 border-r">
+                        {tree.length === 0 ? (
+                            <div className="text-sm text-slate-400">카테고리가 없습니다.</div>
+                        ) : tree.map((root: any) => (
+                            <div key={root.id}>
+                                <div className="text-xs font-black text-slate-700 mb-1.5">{root.name}</div>
+                                <div className="grid grid-cols-2 gap-1">
+                                    {(root.children || []).map((c: any) => {
+                                        const checked = selected.includes(c.id);
+                                        return (
+                                            <label key={c.id}
+                                                className={`flex items-center gap-1.5 text-sm px-2 py-1.5 rounded cursor-pointer ${
+                                                    checked ? 'bg-purple-100 text-purple-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
+                                                }`}>
+                                                <input type="checkbox" checked={checked} onChange={() => toggle(c.id)} className="accent-purple-600" />
+                                                {c.name}
+                                            </label>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
+
+                    {/* 우: 선택된 문항 미리보기 */}
+                    <SelectedItemsPanel items={selectedItems} />
                 </div>
+
                 <div className="px-5 py-3 border-t flex items-center justify-end gap-2 bg-slate-50">
-                    <span className="text-xs text-slate-500 mr-auto">{selected.length}개 카테고리 추가 예정</span>
+                    <span className="text-xs text-slate-500 mr-auto">
+                        {selected.length}개 카테고리 추가 예정 · <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Esc</kbd> 닫기 · <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Ctrl+S</kbd> 저장
+                    </span>
                     <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">취소</button>
                     <button onClick={() => onSave(selected)} disabled={selected.length === 0}
                         className="px-4 py-2 text-sm font-bold rounded bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
-                        {selectedCount}개 문항에 추가
+                        {selectedItems.length}개 문항에 추가
                     </button>
                 </div>
             </div>
@@ -1104,45 +1229,65 @@ function BulkGrammarModal({
 
 // 일괄 삭제 확인 모달
 function BulkDeleteConfirmModal({
-    count, onClose, onConfirm,
+    selectedItems, onClose, onConfirm,
 }: {
-    count: number;
+    selectedItems: any[];
     onClose: () => void;
     onConfirm: () => void;
 }) {
+    const count = selectedItems.length;
     const [confirmText, setConfirmText] = React.useState('');
-    const needsExact = '삭제';
-    const canDelete = confirmText.trim() === needsExact;
+    const canDelete = confirmText.trim() === '삭제';
+    // Esc 닫기 + Ctrl+S 확정 (canDelete 일 때만)
+    React.useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+            else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (canDelete) onConfirm();
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [canDelete, onClose, onConfirm]);
+
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-                <div className="px-5 py-4 border-b">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b flex items-center justify-between">
                     <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
                         ⚠️ {count}개 문항 일괄 삭제
                     </h3>
+                    <button onClick={onClose} className="text-slate-400 hover:text-slate-900 text-2xl leading-none" title="ESC">×</button>
                 </div>
-                <div className="p-5 space-y-3">
-                    <p className="text-sm text-slate-700 leading-relaxed">
-                        선택한 <b className="text-red-600">{count}개 문항</b>이 영구 삭제됩니다.<br />
-                        이 작업은 <b>되돌릴 수 없습니다.</b>
-                    </p>
-                    <p className="text-xs text-slate-500">
-                        지문은 삭제되지 않고, 선택된 문항만 삭제돼요.
-                    </p>
-                    <div className="pt-2">
-                        <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                            확인을 위해 <b className="text-red-600">"삭제"</b> 라고 입력하세요:
-                        </label>
-                        <input
-                            value={confirmText}
-                            onChange={(e) => setConfirmText(e.target.value)}
-                            placeholder="삭제"
-                            autoFocus
-                            className="w-full px-3 py-2 border border-slate-300 rounded text-sm text-slate-900 focus:outline-none focus:border-red-500"
-                        />
+                <div className="flex flex-1 min-h-0">
+                    <div className="flex-1 p-5 space-y-3 border-r">
+                        <p className="text-sm text-slate-700 leading-relaxed">
+                            선택한 <b className="text-red-600">{count}개 문항</b>이 영구 삭제됩니다.<br />
+                            이 작업은 <b>되돌릴 수 없습니다.</b>
+                        </p>
+                        <p className="text-xs text-slate-500">
+                            지문은 삭제되지 않고, 선택된 문항만 삭제돼요.
+                        </p>
+                        <div className="pt-2">
+                            <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                                확인을 위해 <b className="text-red-600">"삭제"</b> 라고 입력하세요:
+                            </label>
+                            <input
+                                value={confirmText}
+                                onChange={(e) => setConfirmText(e.target.value)}
+                                placeholder="삭제"
+                                autoFocus
+                                className="w-full px-3 py-2 border border-slate-300 rounded text-sm text-slate-900 focus:outline-none focus:border-red-500"
+                            />
+                        </div>
                     </div>
+                    <SelectedItemsPanel items={selectedItems} />
                 </div>
                 <div className="px-5 py-3 border-t flex items-center justify-end gap-2 bg-slate-50">
+                    <span className="text-xs text-slate-500 mr-auto">
+                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Esc</kbd> 닫기 · <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Ctrl+S</kbd> 삭제 확정
+                    </span>
                     <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">취소</button>
                     <button onClick={onConfirm} disabled={!canDelete}
                         className="px-4 py-2 text-sm font-bold rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
@@ -1154,7 +1299,37 @@ function BulkDeleteConfirmModal({
     );
 }
 
-// 문법 카테고리 선택 모달 (갤러리 카드에서 사용)
+// 선택된 문항 썸네일 패널 (모달 우측에 공용으로 사용)
+function SelectedItemsPanel({ items }: { items: any[] }) {
+    return (
+        <aside className="w-80 shrink-0 overflow-y-auto bg-slate-50 p-3">
+            <div className="text-[11px] font-black text-slate-500 mb-2 px-1 sticky top-0 bg-slate-50 py-1">
+                선택된 문항 {items.length}개
+            </div>
+            {items.length === 0 ? (
+                <div className="text-xs text-slate-400 px-1">선택된 문항 없음</div>
+            ) : (
+                <div className="space-y-1.5">
+                    {items.map((it) => (
+                        <div key={it.id} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1.5 hover:border-teal-400 transition">
+                            <img src={it.imageUrl} alt="" className="w-10 h-10 object-cover rounded shrink-0" />
+                            <div className="flex-1 min-w-0">
+                                <div className="text-[11px] font-bold text-slate-800 truncate">
+                                    #{it.id} · {it.questionNo ? `${it.questionNo}번` : ''}
+                                </div>
+                                <div className="text-[10px] text-slate-500 truncate">
+                                    {it.passage?.year}.{it.passage?.month} {it.passage?.area || ''} {it.passage?.grade && `· ${it.passage.grade}학년`}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </aside>
+    );
+}
+
+// 문법 카테고리 선택 모달 (갤러리 카드에서 사용 — 단일 문항)
 function GrammarModal({
     tree, initialSelected, onClose, onSave,
 }: {
@@ -1167,6 +1342,17 @@ function GrammarModal({
     const toggle = (id: number) => {
         setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
     };
+    React.useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+            else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                onSave(selected);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [selected, onClose, onSave]);
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
             <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -1198,7 +1384,9 @@ function GrammarModal({
                     ))}
                 </div>
                 <div className="px-5 py-3 border-t flex items-center justify-end gap-2 bg-slate-50">
-                    <span className="text-xs text-slate-500 mr-auto">{selected.length}개 선택</span>
+                    <span className="text-xs text-slate-500 mr-auto">
+                        {selected.length}개 선택 · <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Esc</kbd> 닫기 · <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Ctrl+S</kbd> 저장
+                    </span>
                     <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">취소</button>
                     <button onClick={() => onSave(selected)} className="px-4 py-2 text-sm font-bold rounded bg-purple-600 hover:bg-purple-700 text-white">저장</button>
                 </div>
