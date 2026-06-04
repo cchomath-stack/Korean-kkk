@@ -232,29 +232,35 @@ export default function AdminPage() {
     };
 
     // ─── 드래그 선택 ─────────────────────────────────
+    // 카드 어디서든 드래그 시작 가능. 단 버튼/체크박스/이미지 위에서는 제외.
+    // 5px 이상 움직여야 드래그 모드 진입 (그냥 클릭은 기존 동작 유지).
     const gridRef = useRef<HTMLDivElement>(null);
     const dragStateRef = useRef<{
         startX: number; startY: number;
         mode: 'replace' | 'add' | 'toggle';
         baseline: Set<number>;
+        thresholdMet: boolean;
     } | null>(null);
     const [dragRect, setDragRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+    const DRAG_THRESHOLD = 5;
 
     const handleGridMouseDown = (e: React.MouseEvent) => {
-        // 빈 영역에서만 드래그 시작 (카드 위에서 누르면 무시 — 카드 클릭/체크박스 등이랑 충돌 안 나게)
-        if (e.target !== e.currentTarget) return;
         if (e.button !== 0) return;
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        // 인터랙티브 요소 위에서 시작하면 무시 (체크박스, 버튼, 링크 등)
+        const t = e.target as HTMLElement;
+        if (t.closest('button, input, a, [data-no-drag]')) return;
+        const grid = gridRef.current;
+        if (!grid) return;
+        const rect = grid.getBoundingClientRect();
         const startX = e.clientX - rect.left;
         const startY = e.clientY - rect.top;
         const mode: 'replace' | 'add' | 'toggle' = e.shiftKey ? 'add' : (e.ctrlKey || e.metaKey) ? 'toggle' : 'replace';
-        dragStateRef.current = { startX, startY, mode, baseline: new Set(selectedIds) };
-        setDragRect({ x1: startX, y1: startY, x2: startX, y2: startY });
-        e.preventDefault();
+        dragStateRef.current = { startX, startY, mode, baseline: new Set(selectedIds), thresholdMet: false };
+        // dragRect는 임계값 넘은 후 onMove 안에서 set (이펙트 트리거용)
     };
 
+    // 글로벌 mouse 이벤트 — 항상 등록 (dragStateRef 체크로 무조건 통과/처리 분기)
     useEffect(() => {
-        if (!dragRect) return;
         const onMove = (e: MouseEvent) => {
             const grid = gridRef.current;
             const st = dragStateRef.current;
@@ -262,13 +268,19 @@ export default function AdminPage() {
             const rect = grid.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
+            if (!st.thresholdMet) {
+                const dx = Math.abs(x - st.startX);
+                const dy = Math.abs(y - st.startY);
+                if (dx + dy < DRAG_THRESHOLD) return;
+                st.thresholdMet = true;
+            }
             const x1 = Math.min(st.startX, x);
             const y1 = Math.min(st.startY, y);
             const x2 = Math.max(st.startX, x);
             const y2 = Math.max(st.startY, y);
             setDragRect({ x1, y1, x2, y2 });
 
-            // 교차 카드 ID 수집
+            // 교차 카드 ID
             const inRect = new Set<number>();
             const cards = grid.querySelectorAll('[data-card-id]');
             cards.forEach((cd) => {
@@ -283,7 +295,6 @@ export default function AdminPage() {
                 }
             });
 
-            // 모드에 따라 결합
             let next: Set<number>;
             if (st.mode === 'replace') {
                 next = inRect;
@@ -299,8 +310,14 @@ export default function AdminPage() {
             setSelectedIds(next);
         };
         const onUp = () => {
+            const st = dragStateRef.current;
             dragStateRef.current = null;
-            setDragRect(null);
+            // 임계값 안 넘었으면 그냥 클릭이었던 것 → 선택 상태 그대로 둠
+            if (st && st.thresholdMet) {
+                setDragRect(null);
+            } else {
+                setDragRect(null);
+            }
         };
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
@@ -308,7 +325,7 @@ export default function AdminPage() {
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
         };
-    }, [dragRect]);
+    }, []);
 
     // 일괄: 삭제
     const bulkDelete = async () => {
@@ -1071,7 +1088,7 @@ export default function AdminPage() {
                             return (
                                 <div key={item.id}
                                     data-card-id={item.id}
-                                    className={`bg-white rounded-xl shadow-md border-2 overflow-hidden group transition-all cursor-default ${
+                                    className={`bg-white rounded-xl shadow-md border-2 overflow-hidden group transition-all cursor-crosshair ${
                                         isSelected ? 'border-teal-500 ring-2 ring-teal-300' : 'border-slate-100 hover:ring-2 hover:ring-teal-500'
                                     }`}>
                                     <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden">
@@ -1195,7 +1212,7 @@ function BulkGrammarModal({
 
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[1200px] max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 <div className="px-5 py-4 border-b flex items-center justify-between">
                     <div>
                         <h3 className="font-black text-slate-900 text-base mb-1">
@@ -1279,7 +1296,7 @@ function BulkDeleteConfirmModal({
 
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[1100px] max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 <div className="px-5 py-4 border-b flex items-center justify-between">
                     <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
                         ⚠️ {count}개 문항 일괄 삭제
@@ -1328,48 +1345,45 @@ function BulkDeleteConfirmModal({
 // 선택된 문항 풀사이즈 카드 패널 (모달 우측 공용)
 function SelectedItemsPanel({ items }: { items: any[] }) {
     return (
-        <aside className="w-[420px] shrink-0 overflow-y-auto bg-slate-50 p-4 border-l">
+        <aside className="w-[640px] shrink-0 overflow-y-auto bg-slate-50 p-4 border-l">
             <div className="text-xs font-black text-slate-500 mb-3 px-1 sticky top-0 bg-slate-50 py-1 z-10">
                 선택된 문항 {items.length}개
             </div>
             {items.length === 0 ? (
                 <div className="text-xs text-slate-400 px-1">선택된 문항 없음</div>
             ) : (
-                <div className="space-y-3">
+                <div className="space-y-4">
                     {items.map((it) => {
                         const tagNames: string[] = (it.tags && it.tags.length > 0)
                             ? it.tags.map((qt: any) => qt.tag.name)
                             : (it.keywords ? it.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
                         const grammarCats: any[] = it.grammarCategories || [];
                         return (
-                            <div key={it.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                            <div key={it.id} className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
                                 <div className="relative bg-slate-50">
-                                    <img src={it.imageUrl} alt="" className="w-full max-h-56 object-contain p-2" />
-                                    <div className="absolute top-2 right-2 px-2 py-0.5 bg-black/70 text-white text-[10px] font-black rounded">
+                                    <img src={it.imageUrl} alt="" className="w-full object-contain p-3" style={{ maxHeight: '32rem' }} />
+                                    <div className="absolute top-3 right-3 px-2.5 py-1 bg-black/70 text-white text-xs font-black rounded shadow">
                                         {it.questionNo ? `${it.questionNo}번` : `#${it.id}`}
                                     </div>
                                 </div>
-                                <div className="p-2.5">
+                                <div className="p-3">
                                     {tagNames.length > 0 && (
-                                        <div className="flex flex-wrap gap-1 mb-1.5">
-                                            {tagNames.slice(0, 6).map((name) => (
-                                                <span key={name} className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-bold border border-teal-100">#{name}</span>
+                                        <div className="flex flex-wrap gap-1 mb-2">
+                                            {tagNames.map((name) => (
+                                                <span key={name} className="text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded-full font-bold border border-teal-100">#{name}</span>
                                             ))}
-                                            {tagNames.length > 6 && (
-                                                <span className="text-[9px] text-slate-400 font-bold">+{tagNames.length - 6}</span>
-                                            )}
                                         </div>
                                     )}
                                     {grammarCats.length > 0 && (
-                                        <div className="flex flex-wrap gap-1 mb-1.5">
+                                        <div className="flex flex-wrap gap-1 mb-2">
                                             {grammarCats.map((gc: any) => (
-                                                <span key={gc.category.id} className="text-[9px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-bold border border-purple-200">
+                                                <span key={gc.category.id} className="text-[10px] bg-purple-50 text-purple-700 px-2 py-0.5 rounded font-bold border border-purple-200">
                                                     {gc.category.name}
                                                 </span>
                                             ))}
                                         </div>
                                     )}
-                                    <div className="text-[10px] font-bold text-slate-600">
+                                    <div className="text-[11px] font-bold text-slate-600">
                                         #{it.id} · {it.passage?.year}.{it.passage?.month} {it.passage?.area || ''} {it.passage?.grade && `· ${it.passage.grade}학년`}
                                     </div>
                                 </div>
