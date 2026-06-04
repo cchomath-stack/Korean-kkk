@@ -56,22 +56,91 @@ export default function AdminPage() {
         }, 0);
     };
 
-    // 갤러리 데이터 가져오기
-    const fetchGallery = useCallback(async () => {
+    // 갤러리 상태 (무한스크롤 + 연도 필터)
+    const [yearFilter, setYearFilter] = useState('');
+    const [debouncedYear, setDebouncedYear] = useState('');
+    const [galleryCursor, setGalleryCursor] = useState<number | null>(null);
+    const [galleryHasMore, setGalleryHasMore] = useState(false);
+    const [galleryLoading, setGalleryLoading] = useState(false);
+    const [grammarTree, setGrammarTree] = useState<any[]>([]);
+
+    // 연도 필터 debounce
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedYear(yearFilter.trim()), 350);
+        return () => clearTimeout(t);
+    }, [yearFilter]);
+
+    // 갤러리 로드 (커서 기반 — append, 또는 처음부터 다시)
+    const fetchGalleryPage = useCallback(async (cursor: number | null, replace: boolean) => {
+        setGalleryLoading(true);
         try {
-            const res = await fetch('/api/admin/gallery');
-            if (res.ok) {
-                const data = await res.json();
-                setGallery(data);
-            }
+            const params = new URLSearchParams();
+            if (cursor) params.set('cursor', String(cursor));
+            if (debouncedYear) params.set('year', debouncedYear);
+            const res = await fetch(`/api/admin/gallery?${params}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            setGallery((prev) => replace ? data.items : [...prev, ...data.items]);
+            setGalleryCursor(data.nextCursor);
+            setGalleryHasMore(data.hasMore);
         } catch (e) {
             console.error('Gallery fetch error', e);
+        } finally {
+            setGalleryLoading(false);
         }
+    }, [debouncedYear]);
+
+    // 연도 필터 바뀌면 처음부터 다시 로드
+    useEffect(() => {
+        setGallery([]);
+        setGalleryCursor(null);
+        fetchGalleryPage(null, true);
+    }, [debouncedYear, fetchGalleryPage]);
+
+    // 문법 카테고리 트리 로드 (갤러리 카드의 문법 체크 모달용)
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await fetch('/api/grammar/categories');
+                if (res.ok) {
+                    const data = await res.json();
+                    setGrammarTree(data.tree || []);
+                }
+            } catch (e) { /* ignore */ }
+        })();
     }, []);
 
-    useEffect(() => {
-        fetchGallery();
-    }, [fetchGallery]);
+    // 호환용 fetchGallery (저장 후 처음부터 reload)
+    const fetchGallery = useCallback(() => {
+        setGallery([]);
+        setGalleryCursor(null);
+        fetchGalleryPage(null, true);
+    }, [fetchGalleryPage]);
+
+    // 갤러리 카드에서 문법 체크 모달
+    const [grammarModalFor, setGrammarModalFor] = useState<{ id: number; selected: number[] } | null>(null);
+    const openGrammarModal = (item: any) => {
+        const selected: number[] = (item.grammarCategories || []).map((g: any) => g.category?.id ?? g.categoryId);
+        setGrammarModalFor({ id: item.id, selected });
+    };
+    const saveGrammarSelection = async (questionId: number, categoryIds: number[]) => {
+        try {
+            const res = await fetch('/api/admin/question', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: questionId, grammarCategoryIds: categoryIds }),
+            });
+            if (!res.ok) {
+                const e = await res.json().catch(() => ({}));
+                alert('저장 실패: ' + (e.error || res.status));
+                return;
+            }
+            setGrammarModalFor(null);
+            fetchGallery();
+        } catch (e: any) {
+            alert('저장 실패: ' + e.message);
+        }
+    };
 
     // 문항 수 자동 계산
     useEffect(() => {
@@ -726,38 +795,175 @@ export default function AdminPage() {
                         <Scissors className="w-6 h-6 text-teal-500" />
                         최근 등록 문항 갤러리
                     </h2>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                        {gallery.map((item) => (
-                            <div key={item.id} className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden group hover:ring-2 hover:ring-teal-500 transition-all">
-                                <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden">
-                                    <img src={item.imageUrl} alt="Question" className="w-full h-full object-contain p-2" />
-                                    <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-md text-white text-xs font-black rounded shadow-lg">
-                                        {item.questionNo}번
-                                    </div>
-                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                        <button onClick={() => handleResumePassage(item)} className="p-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-bold text-xs">이어서/수정</button>
-                                        <button onClick={() => handleDeleteQuestion(item.id)} className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold text-xs">삭제</button>
-                                    </div>
-                                </div>
-                                <div className="p-4">
-                                    <div className="flex gap-1.5 flex-wrap mb-3 min-h-[20px]">
-                                        {item.keywords?.split(',').map((k: string) => (
-                                            <span key={k} className="text-[10px] bg-teal-50 text-teal-600 px-2 py-0.5 rounded-full font-bold border border-teal-100">{k}</span>
-                                        ))}
-                                    </div>
-                                    <div className="flex justify-between items-end">
-                                        <div>
-                                            <p className="text-sm font-black text-slate-800">{item.passage?.year} {item.passage?.month}월</p>
-                                            <p className="text-[11px] text-slate-500 font-bold">{item.passage?.office} | {item.passage?.grade}학년</p>
-                                        </div>
-                                        <button onClick={() => handleDeletePassage(item.passageId)} className="text-[10px] text-red-300 hover:text-red-500 underline">삭제</button>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
+
+                    {/* 연도 필터 */}
+                    <div className="mb-6 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 max-w-md">
+                        <span className="text-xs font-bold text-slate-500 ml-1">연도</span>
+                        <input
+                            type="number"
+                            value={yearFilter}
+                            onChange={(e) => setYearFilter(e.target.value)}
+                            placeholder="예: 2025 (비우면 전체)"
+                            className="flex-1 text-sm px-2 py-1.5 border border-slate-200 rounded text-slate-900 focus:outline-none focus:border-teal-500"
+                        />
+                        {yearFilter && (
+                            <button onClick={() => setYearFilter('')} className="text-xs font-bold text-slate-400 hover:text-slate-700">×</button>
+                        )}
                     </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                        {gallery.map((item) => {
+                            // 새 tags 관계 우선, 없으면 legacy keywords CSV fallback
+                            const tagNames: string[] = (item.tags && item.tags.length > 0)
+                                ? item.tags.map((qt: any) => qt.tag.name)
+                                : (item.keywords ? item.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+                            const grammarCats: any[] = item.grammarCategories || [];
+                            return (
+                                <div key={item.id} className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden group hover:ring-2 hover:ring-teal-500 transition-all">
+                                    <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden">
+                                        <img src={item.imageUrl} alt="Question" className="w-full h-full object-contain p-2" />
+                                        <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-md text-white text-xs font-black rounded shadow-lg">
+                                            {item.questionNo}번
+                                        </div>
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                            <button onClick={() => handleResumePassage(item)} className="p-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-bold text-xs">수정</button>
+                                            <button onClick={() => openGrammarModal(item)} className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-xs">문법</button>
+                                            <button onClick={() => handleDeleteQuestion(item.id)} className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold text-xs">삭제</button>
+                                        </div>
+                                    </div>
+                                    <div className="p-4">
+                                        <div className="flex gap-1 flex-wrap mb-2 min-h-[20px]">
+                                            {tagNames.map((name) => (
+                                                <span key={name} className="text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded-full font-bold border border-teal-100">#{name}</span>
+                                            ))}
+                                        </div>
+                                        {grammarCats.length > 0 && (
+                                            <div className="flex gap-1 flex-wrap mb-2">
+                                                {grammarCats.map((gc: any) => (
+                                                    <span key={gc.category.id} className="text-[10px] bg-purple-50 text-purple-700 px-2 py-0.5 rounded font-bold border border-purple-200">
+                                                        {gc.category.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between items-end">
+                                            <div>
+                                                <p className="text-sm font-black text-slate-800">{item.passage?.year} {item.passage?.month}월</p>
+                                                <p className="text-[11px] text-slate-500 font-bold">{item.passage?.area || item.passage?.office} | {item.passage?.grade}학년</p>
+                                            </div>
+                                            <button onClick={() => handleDeletePassage(item.passageId)} className="text-[10px] text-red-300 hover:text-red-500 underline">삭제</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* 무한스크롤 sentinel + 상태 표시 */}
+                    <InfiniteScrollSentinel
+                        hasMore={galleryHasMore}
+                        loading={galleryLoading}
+                        cursor={galleryCursor}
+                        onIntersect={(c) => fetchGalleryPage(c, false)}
+                    />
                 </section>
             </div>
+
+            {/* 문법 카테고리 선택 모달 */}
+            {grammarModalFor && (
+                <GrammarModal
+                    tree={grammarTree}
+                    initialSelected={grammarModalFor.selected}
+                    onClose={() => setGrammarModalFor(null)}
+                    onSave={(ids) => saveGrammarSelection(grammarModalFor.id, ids)}
+                />
+            )}
+        </div>
+    );
+}
+
+// 문법 카테고리 선택 모달 (갤러리 카드에서 사용)
+function GrammarModal({
+    tree, initialSelected, onClose, onSave,
+}: {
+    tree: any[];
+    initialSelected: number[];
+    onClose: () => void;
+    onSave: (ids: number[]) => void;
+}) {
+    const [selected, setSelected] = React.useState<number[]>(initialSelected);
+    const toggle = (id: number) => {
+        setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+    };
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b flex items-center justify-between">
+                    <h3 className="font-black text-slate-900 text-base">문법(어법) 카테고리 선택</h3>
+                    <button onClick={onClose} className="text-slate-400 hover:text-slate-900 text-2xl leading-none">×</button>
+                </div>
+                <div className="overflow-y-auto p-5 space-y-4 flex-1">
+                    {tree.length === 0 ? (
+                        <div className="text-sm text-slate-400">카테고리가 없습니다. 관리자 페이지(/admin/grammar)에서 추가하세요.</div>
+                    ) : tree.map((root: any) => (
+                        <div key={root.id}>
+                            <div className="text-xs font-black text-slate-700 mb-1.5">{root.name}</div>
+                            <div className="grid grid-cols-2 gap-1">
+                                {(root.children || []).map((c: any) => {
+                                    const checked = selected.includes(c.id);
+                                    return (
+                                        <label key={c.id}
+                                            className={`flex items-center gap-1.5 text-sm px-2 py-1.5 rounded cursor-pointer ${
+                                                checked ? 'bg-purple-100 text-purple-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
+                                            }`}>
+                                            <input type="checkbox" checked={checked} onChange={() => toggle(c.id)} className="accent-purple-600" />
+                                            {c.name}
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <div className="px-5 py-3 border-t flex items-center justify-end gap-2 bg-slate-50">
+                    <span className="text-xs text-slate-500 mr-auto">{selected.length}개 선택</span>
+                    <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">취소</button>
+                    <button onClick={() => onSave(selected)} className="px-4 py-2 text-sm font-bold rounded bg-purple-600 hover:bg-purple-700 text-white">저장</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// 무한스크롤 sentinel: 화면 하단에 도달하면 onIntersect 호출
+function InfiniteScrollSentinel({
+    hasMore, loading, cursor, onIntersect,
+}: {
+    hasMore: boolean;
+    loading: boolean;
+    cursor: number | null;
+    onIntersect: (cursor: number | null) => void;
+}) {
+    const ref = React.useRef<HTMLDivElement>(null);
+    React.useEffect(() => {
+        if (!hasMore || loading) return;
+        const el = ref.current;
+        if (!el) return;
+        const observer = new IntersectionObserver((entries) => {
+            for (const e of entries) {
+                if (e.isIntersecting) {
+                    onIntersect(cursor);
+                    break;
+                }
+            }
+        }, { rootMargin: '300px' });
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [hasMore, loading, cursor, onIntersect]);
+
+    return (
+        <div ref={ref} className="text-center py-8 text-xs text-slate-400 font-bold">
+            {loading ? '불러오는 중...' : hasMore ? '스크롤하면 더 불러옵니다' : '더 이상 없습니다'}
         </div>
     );
 }
