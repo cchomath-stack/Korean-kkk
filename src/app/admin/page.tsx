@@ -232,8 +232,10 @@ export default function AdminPage() {
     };
 
     // ─── 드래그 선택 ─────────────────────────────────
-    // 카드 어디서든 드래그 시작 가능. 단 버튼/체크박스/이미지 위에서는 제외.
+    // 갤러리 섹션(그리드 좌/우 여백 포함) 어디서든 드래그 시작 가능.
+    // 단 버튼/체크박스/입력 등 인터랙티브 요소 위에서는 제외.
     // 5px 이상 움직여야 드래그 모드 진입 (그냥 클릭은 기존 동작 유지).
+    const sectionRef = useRef<HTMLElement>(null);
     const gridRef = useRef<HTMLDivElement>(null);
     const dragStateRef = useRef<{
         startX: number; startY: number;
@@ -244,28 +246,26 @@ export default function AdminPage() {
     const [dragRect, setDragRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const DRAG_THRESHOLD = 5;
 
-    const handleGridMouseDown = (e: React.MouseEvent) => {
+    const handleSectionMouseDown = (e: React.MouseEvent) => {
         if (e.button !== 0) return;
-        // 인터랙티브 요소 위에서 시작하면 무시 (체크박스, 버튼, 링크 등)
         const t = e.target as HTMLElement;
-        if (t.closest('button, input, a, [data-no-drag]')) return;
-        const grid = gridRef.current;
-        if (!grid) return;
-        const rect = grid.getBoundingClientRect();
+        if (t.closest('button, input, a, textarea, [data-no-drag]')) return;
+        const sec = sectionRef.current;
+        if (!sec) return;
+        const rect = sec.getBoundingClientRect();
         const startX = e.clientX - rect.left;
         const startY = e.clientY - rect.top;
         const mode: 'replace' | 'add' | 'toggle' = e.shiftKey ? 'add' : (e.ctrlKey || e.metaKey) ? 'toggle' : 'replace';
         dragStateRef.current = { startX, startY, mode, baseline: new Set(selectedIds), thresholdMet: false };
-        // dragRect는 임계값 넘은 후 onMove 안에서 set (이펙트 트리거용)
     };
 
-    // 글로벌 mouse 이벤트 — 항상 등록 (dragStateRef 체크로 무조건 통과/처리 분기)
+    // 글로벌 mouse 이벤트 — 항상 등록 (dragStateRef 체크로 처리 분기)
     useEffect(() => {
         const onMove = (e: MouseEvent) => {
-            const grid = gridRef.current;
+            const sec = sectionRef.current;
             const st = dragStateRef.current;
-            if (!grid || !st) return;
-            const rect = grid.getBoundingClientRect();
+            if (!sec || !st) return;
+            const rect = sec.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
             if (!st.thresholdMet) {
@@ -280,9 +280,9 @@ export default function AdminPage() {
             const y2 = Math.max(st.startY, y);
             setDragRect({ x1, y1, x2, y2 });
 
-            // 교차 카드 ID
+            // 교차 카드 ID (섹션 좌표 기준)
             const inRect = new Set<number>();
-            const cards = grid.querySelectorAll('[data-card-id]');
+            const cards = sec.querySelectorAll('[data-card-id]');
             cards.forEach((cd) => {
                 const r = (cd as HTMLElement).getBoundingClientRect();
                 const cx1 = r.left - rect.left;
@@ -310,14 +310,8 @@ export default function AdminPage() {
             setSelectedIds(next);
         };
         const onUp = () => {
-            const st = dragStateRef.current;
             dragStateRef.current = null;
-            // 임계값 안 넘었으면 그냥 클릭이었던 것 → 선택 상태 그대로 둠
-            if (st && st.thresholdMet) {
-                setDragRect(null);
-            } else {
-                setDragRect(null);
-            }
+            setDragRect(null);
         };
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
@@ -995,7 +989,11 @@ export default function AdminPage() {
                 </div>
 
                 {/* 갤러리 섹션 */}
-                <section className="mt-16 border-t border-slate-200 pt-10">
+                <section
+                    ref={sectionRef}
+                    onMouseDown={handleSectionMouseDown}
+                    className="mt-16 border-t border-slate-200 pt-10 relative cursor-crosshair select-none px-2 -mx-2"
+                >
                     <h2 className="text-2xl font-black text-slate-800 mb-6 flex items-center gap-3">
                         <Scissors className="w-6 h-6 text-teal-500" />
                         최근 등록 문항 갤러리
@@ -1060,24 +1058,25 @@ export default function AdminPage() {
                         </div>
                     )}
 
+                    {/* 드래그 사각형 오버레이 — 섹션 전체 영역 (그리드 좌/우 여백 포함) */}
+                    {dragRect && (
+                        <div
+                            className="absolute pointer-events-none border-2 border-teal-500 bg-teal-500/15 rounded"
+                            style={{
+                                left: dragRect.x1,
+                                top: dragRect.y1,
+                                width: dragRect.x2 - dragRect.x1,
+                                height: dragRect.y2 - dragRect.y1,
+                                zIndex: 20,
+                            }}
+                        />
+                    )}
+
                     <div
                         ref={gridRef}
-                        onMouseDown={handleGridMouseDown}
-                        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 relative select-none cursor-crosshair"
+                        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"
                         style={{ minHeight: '200px' }}
                     >
-                        {dragRect && (
-                            <div
-                                className="absolute pointer-events-none border-2 border-teal-500 bg-teal-500/15 rounded"
-                                style={{
-                                    left: dragRect.x1,
-                                    top: dragRect.y1,
-                                    width: dragRect.x2 - dragRect.x1,
-                                    height: dragRect.y2 - dragRect.y1,
-                                    zIndex: 20,
-                                }}
-                            />
-                        )}
                         {gallery.map((item) => {
                             // 새 tags 관계 우선, 없으면 legacy keywords CSV fallback
                             const tagNames: string[] = (item.tags && item.tags.length > 0)
