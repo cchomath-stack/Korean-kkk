@@ -117,7 +117,7 @@ export default function AdminPage() {
         fetchGalleryPage(null, true);
     }, [fetchGalleryPage]);
 
-    // 갤러리 카드에서 문법 체크 모달
+    // 갤러리 카드에서 문법 체크 모달 (단일)
     const [grammarModalFor, setGrammarModalFor] = useState<{ id: number; selected: number[] } | null>(null);
     const openGrammarModal = (item: any) => {
         const selected: number[] = (item.grammarCategories || []).map((g: any) => g.category?.id ?? g.categoryId);
@@ -139,6 +139,102 @@ export default function AdminPage() {
             fetchGallery();
         } catch (e: any) {
             alert('저장 실패: ' + e.message);
+        }
+    };
+
+    // ─── 일괄 선택 상태 ──────────────────────────────
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [lastClickedId, setLastClickedId] = useState<number | null>(null);
+    const [bulkGrammarOpen, setBulkGrammarOpen] = useState(false);
+    const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+    // 연도 필터 바뀌면 선택 자동 해제
+    useEffect(() => {
+        setSelectedIds(new Set());
+        setLastClickedId(null);
+    }, [debouncedYear]);
+
+    // 카드 클릭 토글 (Shift = 범위 선택)
+    const toggleSelect = useCallback((id: number, shift: boolean) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (shift && lastClickedId != null && gallery.length > 0) {
+                // 범위 선택
+                const ids = gallery.map((g) => g.id);
+                const a = ids.indexOf(lastClickedId);
+                const b = ids.indexOf(id);
+                if (a >= 0 && b >= 0) {
+                    const [lo, hi] = a < b ? [a, b] : [b, a];
+                    const shouldAdd = !next.has(id);
+                    for (let i = lo; i <= hi; i++) {
+                        if (shouldAdd) next.add(ids[i]);
+                        else next.delete(ids[i]);
+                    }
+                }
+            } else {
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+            }
+            return next;
+        });
+        setLastClickedId(id);
+    }, [lastClickedId, gallery]);
+
+    // 키보드 단축키: Ctrl+A 전체선택, Esc 해제
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const tag = (e.target as HTMLElement)?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                setSelectedIds(new Set(gallery.map((g) => g.id)));
+            } else if (e.key === 'Escape') {
+                if (bulkGrammarOpen || bulkDeleteOpen || grammarModalFor) return; // 모달은 ESC 처리 양보
+                setSelectedIds(new Set());
+                setLastClickedId(null);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [gallery, bulkGrammarOpen, bulkDeleteOpen, grammarModalFor]);
+
+    // 일괄: 문법 추가 (merge)
+    const bulkAssignGrammar = async (categoryIds: number[]) => {
+        if (selectedIds.size === 0 || categoryIds.length === 0) return;
+        try {
+            const res = await fetch('/api/admin/question/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ questionIds: [...selectedIds], categoryIds }),
+            });
+            const data = await res.json();
+            if (!res.ok) { alert('일괄 처리 실패: ' + (data.error || res.status)); return; }
+            alert(`${data.questionsAffected}개 문항에 ${data.categoriesAssigned}개 카테고리 적용 완료\n(신규 ${data.newConnections}건, 기존 ${data.alreadyExisted}건)`);
+            setBulkGrammarOpen(false);
+            setSelectedIds(new Set());
+            fetchGallery();
+        } catch (e: any) {
+            alert('실패: ' + e.message);
+        }
+    };
+
+    // 일괄: 삭제
+    const bulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        try {
+            const res = await fetch('/api/admin/question/bulk', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ questionIds: [...selectedIds] }),
+            });
+            const data = await res.json();
+            if (!res.ok) { alert('일괄 삭제 실패: ' + (data.error || res.status)); return; }
+            alert(`${data.deleted}개 문항 삭제 완료`);
+            setBulkDeleteOpen(false);
+            setSelectedIds(new Set());
+            fetchGallery();
+        } catch (e: any) {
+            alert('실패: ' + e.message);
         }
     };
 
@@ -797,7 +893,7 @@ export default function AdminPage() {
                     </h2>
 
                     {/* 연도 필터 */}
-                    <div className="mb-6 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 max-w-md">
+                    <div className="mb-4 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 max-w-md">
                         <span className="text-xs font-bold text-slate-500 ml-1">연도</span>
                         <input
                             type="number"
@@ -811,6 +907,35 @@ export default function AdminPage() {
                         )}
                     </div>
 
+                    {/* 일괄 액션바 (sticky, 선택 있을 때만 표시) */}
+                    {selectedIds.size > 0 && (
+                        <div className="sticky top-2 z-30 mb-4 bg-slate-900 text-white rounded-xl shadow-lg p-3 flex items-center gap-3 flex-wrap">
+                            <span className="text-sm font-bold pl-2">
+                                {selectedIds.size}개 선택됨
+                            </span>
+                            <span className="text-[10px] text-slate-400">Ctrl+A 전체 · Shift+클릭 범위 · Esc 해제</span>
+                            <div className="ml-auto flex items-center gap-2">
+                                <button onClick={() => setSelectedIds(new Set(gallery.map((g) => g.id)))}
+                                    className="px-3 py-1.5 text-xs font-bold rounded bg-slate-700 hover:bg-slate-600">
+                                    현재 보이는 {gallery.length}개 모두
+                                </button>
+                                <button onClick={() => { setSelectedIds(new Set()); setLastClickedId(null); }}
+                                    className="px-3 py-1.5 text-xs font-bold rounded bg-slate-700 hover:bg-slate-600">
+                                    해제
+                                </button>
+                                <div className="w-px h-5 bg-slate-700" />
+                                <button onClick={() => setBulkGrammarOpen(true)}
+                                    className="px-3 py-1.5 text-xs font-bold rounded bg-purple-600 hover:bg-purple-700 flex items-center gap-1">
+                                    문법 카테고리 추가
+                                </button>
+                                <button onClick={() => setBulkDeleteOpen(true)}
+                                    className="px-3 py-1.5 text-xs font-bold rounded bg-red-600 hover:bg-red-700 flex items-center gap-1">
+                                    일괄 삭제
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                         {gallery.map((item) => {
                             // 새 tags 관계 우선, 없으면 legacy keywords CSV fallback
@@ -818,9 +943,25 @@ export default function AdminPage() {
                                 ? item.tags.map((qt: any) => qt.tag.name)
                                 : (item.keywords ? item.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
                             const grammarCats: any[] = item.grammarCategories || [];
+                            const isSelected = selectedIds.has(item.id);
                             return (
-                                <div key={item.id} className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden group hover:ring-2 hover:ring-teal-500 transition-all">
+                                <div key={item.id}
+                                    className={`bg-white rounded-xl shadow-md border-2 overflow-hidden group transition-all ${
+                                        isSelected ? 'border-teal-500 ring-2 ring-teal-300' : 'border-slate-100 hover:ring-2 hover:ring-teal-500'
+                                    }`}>
                                     <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden">
+                                        {/* 선택 체크박스 (좌상단, 항상 노출) */}
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); toggleSelect(item.id, e.shiftKey); }}
+                                            className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-md border-2 flex items-center justify-center text-xs font-black shadow-sm transition ${
+                                                isSelected
+                                                    ? 'bg-teal-600 border-teal-700 text-white'
+                                                    : 'bg-white/90 border-slate-300 text-transparent hover:border-teal-500 hover:text-teal-500'
+                                            }`}
+                                            title={isSelected ? '선택 해제' : '선택 (Shift+클릭으로 범위)'}
+                                        >
+                                            ✓
+                                        </button>
                                         <img src={item.imageUrl} alt="Question" className="w-full h-full object-contain p-2" />
                                         <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-md text-white text-xs font-black rounded shadow-lg">
                                             {item.questionNo}번
@@ -869,7 +1010,7 @@ export default function AdminPage() {
                 </section>
             </div>
 
-            {/* 문법 카테고리 선택 모달 */}
+            {/* 단일 문법 카테고리 선택 모달 */}
             {grammarModalFor && (
                 <GrammarModal
                     tree={grammarTree}
@@ -878,6 +1019,137 @@ export default function AdminPage() {
                     onSave={(ids) => saveGrammarSelection(grammarModalFor.id, ids)}
                 />
             )}
+
+            {/* 일괄 문법 추가 모달 */}
+            {bulkGrammarOpen && (
+                <BulkGrammarModal
+                    tree={grammarTree}
+                    selectedCount={selectedIds.size}
+                    onClose={() => setBulkGrammarOpen(false)}
+                    onSave={(ids) => bulkAssignGrammar(ids)}
+                />
+            )}
+
+            {/* 일괄 삭제 확인 모달 */}
+            {bulkDeleteOpen && (
+                <BulkDeleteConfirmModal
+                    count={selectedIds.size}
+                    onClose={() => setBulkDeleteOpen(false)}
+                    onConfirm={bulkDelete}
+                />
+            )}
+        </div>
+    );
+}
+
+// 일괄 문법 추가 모달 (병합 동작 — 기존 카테고리 유지하며 추가)
+function BulkGrammarModal({
+    tree, selectedCount, onClose, onSave,
+}: {
+    tree: any[];
+    selectedCount: number;
+    onClose: () => void;
+    onSave: (ids: number[]) => void;
+}) {
+    const [selected, setSelected] = React.useState<number[]>([]);
+    const toggle = (id: number) => {
+        setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+    };
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b">
+                    <h3 className="font-black text-slate-900 text-base mb-1">
+                        문법 카테고리 일괄 추가
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                        선택한 <b className="text-purple-700">{selectedCount}개 문항</b>에 아래 카테고리를 <b>추가</b>합니다. (기존 카테고리는 유지)
+                    </p>
+                </div>
+                <div className="overflow-y-auto p-5 space-y-4 flex-1">
+                    {tree.length === 0 ? (
+                        <div className="text-sm text-slate-400">카테고리가 없습니다.</div>
+                    ) : tree.map((root: any) => (
+                        <div key={root.id}>
+                            <div className="text-xs font-black text-slate-700 mb-1.5">{root.name}</div>
+                            <div className="grid grid-cols-2 gap-1">
+                                {(root.children || []).map((c: any) => {
+                                    const checked = selected.includes(c.id);
+                                    return (
+                                        <label key={c.id}
+                                            className={`flex items-center gap-1.5 text-sm px-2 py-1.5 rounded cursor-pointer ${
+                                                checked ? 'bg-purple-100 text-purple-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
+                                            }`}>
+                                            <input type="checkbox" checked={checked} onChange={() => toggle(c.id)} className="accent-purple-600" />
+                                            {c.name}
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <div className="px-5 py-3 border-t flex items-center justify-end gap-2 bg-slate-50">
+                    <span className="text-xs text-slate-500 mr-auto">{selected.length}개 카테고리 추가 예정</span>
+                    <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">취소</button>
+                    <button onClick={() => onSave(selected)} disabled={selected.length === 0}
+                        className="px-4 py-2 text-sm font-bold rounded bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
+                        {selectedCount}개 문항에 추가
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// 일괄 삭제 확인 모달
+function BulkDeleteConfirmModal({
+    count, onClose, onConfirm,
+}: {
+    count: number;
+    onClose: () => void;
+    onConfirm: () => void;
+}) {
+    const [confirmText, setConfirmText] = React.useState('');
+    const needsExact = '삭제';
+    const canDelete = confirmText.trim() === needsExact;
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b">
+                    <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
+                        ⚠️ {count}개 문항 일괄 삭제
+                    </h3>
+                </div>
+                <div className="p-5 space-y-3">
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                        선택한 <b className="text-red-600">{count}개 문항</b>이 영구 삭제됩니다.<br />
+                        이 작업은 <b>되돌릴 수 없습니다.</b>
+                    </p>
+                    <p className="text-xs text-slate-500">
+                        지문은 삭제되지 않고, 선택된 문항만 삭제돼요.
+                    </p>
+                    <div className="pt-2">
+                        <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                            확인을 위해 <b className="text-red-600">"삭제"</b> 라고 입력하세요:
+                        </label>
+                        <input
+                            value={confirmText}
+                            onChange={(e) => setConfirmText(e.target.value)}
+                            placeholder="삭제"
+                            autoFocus
+                            className="w-full px-3 py-2 border border-slate-300 rounded text-sm text-slate-900 focus:outline-none focus:border-red-500"
+                        />
+                    </div>
+                </div>
+                <div className="px-5 py-3 border-t flex items-center justify-end gap-2 bg-slate-50">
+                    <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">취소</button>
+                    <button onClick={onConfirm} disabled={!canDelete}
+                        className="px-4 py-2 text-sm font-bold rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
+                        {count}개 영구 삭제
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
