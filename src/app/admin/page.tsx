@@ -218,6 +218,19 @@ export default function AdminPage() {
         }
     };
 
+    // 드래그 안내 띠 (영구 dismiss)
+    const DRAG_HINT_KEY = 'oreum-drag-hint-dismissed';
+    const [showDragHint, setShowDragHint] = useState(false);
+    useEffect(() => {
+        try {
+            if (!localStorage.getItem(DRAG_HINT_KEY)) setShowDragHint(true);
+        } catch { /* SSR / disabled */ }
+    }, []);
+    const dismissDragHint = () => {
+        setShowDragHint(false);
+        try { localStorage.setItem(DRAG_HINT_KEY, '1'); } catch { /* ignore */ }
+    };
+
     // ─── 드래그 선택 ─────────────────────────────────
     const gridRef = useRef<HTMLDivElement>(null);
     const dragStateRef = useRef<{
@@ -986,6 +999,19 @@ export default function AdminPage() {
                         )}
                     </div>
 
+                    {/* 드래그 선택 안내 띠 (첫 진입 시 1회) */}
+                    {showDragHint && selectedIds.size === 0 && (
+                        <div className="mb-3 bg-teal-50 border border-teal-200 rounded-lg p-3 flex items-center gap-2 text-sm">
+                            <span className="text-base">💡</span>
+                            <span className="text-teal-900">
+                                <b>팁:</b> 카드 사이 빈 영역을 마우스로 <b>드래그</b>하면 여러 카드를 한 번에 선택할 수 있어요. (Shift/Ctrl 조합 가능)
+                            </span>
+                            <button onClick={dismissDragHint} className="ml-auto text-xs font-bold text-teal-700 hover:text-teal-900 px-2 py-0.5 rounded hover:bg-teal-100">
+                                알겠어요 ×
+                            </button>
+                        </div>
+                    )}
+
                     {/* 일괄 액션바 (sticky, 선택 있을 때만 표시) */}
                     {selectedIds.size > 0 && (
                         <div className="sticky top-2 z-30 mb-4 bg-slate-900 text-white rounded-xl shadow-lg p-3 flex items-center gap-3 flex-wrap">
@@ -1020,7 +1046,7 @@ export default function AdminPage() {
                     <div
                         ref={gridRef}
                         onMouseDown={handleGridMouseDown}
-                        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 relative select-none"
+                        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 relative select-none cursor-crosshair"
                         style={{ minHeight: '200px' }}
                     >
                         {dragRect && (
@@ -1045,7 +1071,7 @@ export default function AdminPage() {
                             return (
                                 <div key={item.id}
                                     data-card-id={item.id}
-                                    className={`bg-white rounded-xl shadow-md border-2 overflow-hidden group transition-all ${
+                                    className={`bg-white rounded-xl shadow-md border-2 overflow-hidden group transition-all cursor-default ${
                                         isSelected ? 'border-teal-500 ring-2 ring-teal-300' : 'border-slate-100 hover:ring-2 hover:ring-teal-500'
                                     }`}>
                                     <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden">
@@ -1169,7 +1195,7 @@ function BulkGrammarModal({
 
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 <div className="px-5 py-4 border-b flex items-center justify-between">
                     <div>
                         <h3 className="font-black text-slate-900 text-base mb-1">
@@ -1253,7 +1279,7 @@ function BulkDeleteConfirmModal({
 
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 <div className="px-5 py-4 border-b flex items-center justify-between">
                     <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
                         ⚠️ {count}개 문항 일괄 삭제
@@ -1299,30 +1325,57 @@ function BulkDeleteConfirmModal({
     );
 }
 
-// 선택된 문항 썸네일 패널 (모달 우측에 공용으로 사용)
+// 선택된 문항 풀사이즈 카드 패널 (모달 우측 공용)
 function SelectedItemsPanel({ items }: { items: any[] }) {
     return (
-        <aside className="w-80 shrink-0 overflow-y-auto bg-slate-50 p-3">
-            <div className="text-[11px] font-black text-slate-500 mb-2 px-1 sticky top-0 bg-slate-50 py-1">
+        <aside className="w-[420px] shrink-0 overflow-y-auto bg-slate-50 p-4 border-l">
+            <div className="text-xs font-black text-slate-500 mb-3 px-1 sticky top-0 bg-slate-50 py-1 z-10">
                 선택된 문항 {items.length}개
             </div>
             {items.length === 0 ? (
                 <div className="text-xs text-slate-400 px-1">선택된 문항 없음</div>
             ) : (
-                <div className="space-y-1.5">
-                    {items.map((it) => (
-                        <div key={it.id} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1.5 hover:border-teal-400 transition">
-                            <img src={it.imageUrl} alt="" className="w-10 h-10 object-cover rounded shrink-0" />
-                            <div className="flex-1 min-w-0">
-                                <div className="text-[11px] font-bold text-slate-800 truncate">
-                                    #{it.id} · {it.questionNo ? `${it.questionNo}번` : ''}
+                <div className="space-y-3">
+                    {items.map((it) => {
+                        const tagNames: string[] = (it.tags && it.tags.length > 0)
+                            ? it.tags.map((qt: any) => qt.tag.name)
+                            : (it.keywords ? it.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+                        const grammarCats: any[] = it.grammarCategories || [];
+                        return (
+                            <div key={it.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="relative bg-slate-50">
+                                    <img src={it.imageUrl} alt="" className="w-full max-h-56 object-contain p-2" />
+                                    <div className="absolute top-2 right-2 px-2 py-0.5 bg-black/70 text-white text-[10px] font-black rounded">
+                                        {it.questionNo ? `${it.questionNo}번` : `#${it.id}`}
+                                    </div>
                                 </div>
-                                <div className="text-[10px] text-slate-500 truncate">
-                                    {it.passage?.year}.{it.passage?.month} {it.passage?.area || ''} {it.passage?.grade && `· ${it.passage.grade}학년`}
+                                <div className="p-2.5">
+                                    {tagNames.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mb-1.5">
+                                            {tagNames.slice(0, 6).map((name) => (
+                                                <span key={name} className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-bold border border-teal-100">#{name}</span>
+                                            ))}
+                                            {tagNames.length > 6 && (
+                                                <span className="text-[9px] text-slate-400 font-bold">+{tagNames.length - 6}</span>
+                                            )}
+                                        </div>
+                                    )}
+                                    {grammarCats.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mb-1.5">
+                                            {grammarCats.map((gc: any) => (
+                                                <span key={gc.category.id} className="text-[9px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-bold border border-purple-200">
+                                                    {gc.category.name}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="text-[10px] font-bold text-slate-600">
+                                        #{it.id} · {it.passage?.year}.{it.passage?.month} {it.passage?.area || ''} {it.passage?.grade && `· ${it.passage.grade}학년`}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </aside>
