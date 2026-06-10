@@ -117,6 +117,17 @@ export default function AdminPage() {
         fetchGalleryPage(null, true);
     }, [fetchGalleryPage]);
 
+    // 우측 슬라이드 수정 패널
+    const [editPanelFor, setEditPanelFor] = useState<any | null>(null);
+    const openEditPanel = (item: any) => setEditPanelFor(item);
+    const closeEditPanel = () => setEditPanelFor(null);
+    // 패널에서 저장 성공 시 갤러리 리스트의 해당 항목만 부분 갱신 (스크롤 유지)
+    const updateGalleryItem = (updated: any) => {
+        setGallery((prev) => prev.map((g) => g.id === updated.id ? { ...g, ...updated } : g));
+        // 패널 내용도 동기화
+        setEditPanelFor((cur: any) => cur && cur.id === updated.id ? { ...cur, ...updated } : cur);
+    };
+
     // 갤러리 카드에서 문법 체크 모달 (단일)
     const [grammarModalFor, setGrammarModalFor] = useState<{ id: number; selected: number[] } | null>(null);
     const openGrammarModal = (item: any) => {
@@ -1108,7 +1119,7 @@ export default function AdminPage() {
                                             {item.questionNo}번
                                         </div>
                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                            <button onClick={() => handleResumePassage(item)} className="p-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-bold text-xs">수정</button>
+                                            <button onClick={() => openEditPanel(item)} className="p-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-bold text-xs">수정</button>
                                             <button onClick={() => openGrammarModal(item)} className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-xs">문법</button>
                                             <button onClick={() => handleDeleteQuestion(item.id)} className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold text-xs">삭제</button>
                                         </div>
@@ -1179,6 +1190,229 @@ export default function AdminPage() {
                     onConfirm={bulkDelete}
                 />
             )}
+
+            {/* 우측 슬라이드 수정 패널 */}
+            {editPanelFor && (
+                <EditQuestionPanel
+                    item={editPanelFor}
+                    grammarTree={grammarTree}
+                    onClose={closeEditPanel}
+                    onSaved={updateGalleryItem}
+                />
+            )}
+        </div>
+    );
+}
+
+// 우측 슬라이드 수정 패널 (단일 문항 편집)
+function EditQuestionPanel({
+    item, grammarTree, onClose, onSaved,
+}: {
+    item: any;
+    grammarTree: any[];
+    onClose: () => void;
+    onSaved: (updated: any) => void;
+}) {
+    const ANSWERS = ['①', '②', '③', '④', '⑤'];
+    const DIFFS = ['상', '중', '하'];
+
+    const initialTags: string[] = (item.tags && item.tags.length > 0)
+        ? item.tags.map((qt: any) => qt.tag.name)
+        : (item.keywords ? item.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+    const initialGrammarIds: number[] = (item.grammarCategories || []).map((g: any) => g.category?.id ?? g.categoryId);
+
+    const [ocrText, setOcrText] = React.useState<string>(item.ocrText || '');
+    const [questionNo, setQuestionNo] = React.useState<string>(item.questionNo?.toString() || '');
+    const [answer, setAnswer] = React.useState<string>(item.answer || '');
+    const [difficulty, setDifficulty] = React.useState<string>(item.difficulty || '');
+    const [tags, setTags] = React.useState<string[]>(initialTags);
+    const [tagInput, setTagInput] = React.useState('');
+    const [grammarIds, setGrammarIds] = React.useState<number[]>(initialGrammarIds);
+    const [saving, setSaving] = React.useState(false);
+    const [savedToast, setSavedToast] = React.useState(false);
+
+    const toggleGrammar = (id: number) => {
+        setGrammarIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+    };
+    const addTag = () => {
+        const v = tagInput.trim();
+        if (!v) return;
+        if (!tags.includes(v)) setTags([...tags, v]);
+        setTagInput('');
+    };
+
+    const save = React.useCallback(async () => {
+        setSaving(true);
+        try {
+            const res = await fetch('/api/admin/question', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: item.id,
+                    ocrText, questionNo, answer, difficulty,
+                    tags, grammarCategoryIds: grammarIds,
+                }),
+            });
+            if (!res.ok) {
+                const e = await res.json().catch(() => ({}));
+                alert('저장 실패: ' + (e.error || res.status));
+                return;
+            }
+            const updated = await res.json();
+            // 정규화 — 갤러리 카드용 형태 유지
+            onSaved({
+                ...item,
+                ocrText, questionNo: questionNo ? parseInt(questionNo) : null,
+                answer, difficulty,
+                tags: (updated.tags || []),
+                grammarCategories: (updated.grammarCategories || []),
+            });
+            setSavedToast(true);
+            setTimeout(() => setSavedToast(false), 1800);
+        } catch (e: any) {
+            alert('저장 실패: ' + e.message);
+        } finally {
+            setSaving(false);
+        }
+    }, [item, ocrText, questionNo, answer, difficulty, tags, grammarIds, onSaved]);
+
+    // Esc 닫기, Ctrl+S 저장
+    React.useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+            else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (!saving) save();
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [save, saving, onClose]);
+
+    return (
+        <div className="fixed inset-0 z-50 flex">
+            {/* 백드롭 */}
+            <div className="flex-1 bg-black/30" onClick={onClose} />
+            {/* 슬라이드 패널 */}
+            <div className="w-[720px] max-w-[92vw] bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+                <div className="px-5 py-4 border-b flex items-center justify-between bg-slate-50">
+                    <div>
+                        <h3 className="font-black text-slate-900 text-base">
+                            문제 #{item.id} 수정
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                            {item.questionNo ? `${item.questionNo}번 · ` : ''}{item.passage?.year}.{item.passage?.month} {item.passage?.area || ''} {item.passage?.grade ? `· ${item.passage.grade}학년` : ''}
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="text-slate-400 hover:text-slate-900 text-2xl leading-none" title="ESC">×</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                    {/* 이미지 미리보기 */}
+                    <div className="bg-slate-50 rounded-lg p-2 border border-slate-200">
+                        <img src={item.imageUrl} alt="" className="w-full max-h-96 object-contain" />
+                    </div>
+
+                    {/* 메타 */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 block mb-1">번호</label>
+                            <input value={questionNo} onChange={(e) => setQuestionNo(e.target.value)} type="number"
+                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900" />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 block mb-1">난이도</label>
+                            <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}
+                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900 bg-white">
+                                <option value="">-</option>
+                                {DIFFS.map((d) => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">정답</label>
+                        <div className="flex gap-1.5">
+                            {ANSWERS.map((a) => (
+                                <button key={a} type="button"
+                                    onClick={() => setAnswer(answer === a ? '' : a)}
+                                    className={`flex-1 py-2 rounded border-2 font-black text-base ${
+                                        answer === a ? 'bg-teal-500 text-white border-teal-600' : 'bg-white text-slate-700 border-slate-200 hover:border-teal-400'
+                                    }`}>
+                                    {a}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">태그</label>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                            {tags.map((t) => (
+                                <span key={t} className="text-xs font-bold px-2 py-0.5 rounded bg-teal-100 text-teal-800 border border-teal-300 flex items-center gap-1">
+                                    #{t}
+                                    <button onClick={() => setTags(tags.filter((x) => x !== t))} className="text-teal-600 hover:text-teal-900">×</button>
+                                </span>
+                            ))}
+                            <input value={tagInput} onChange={(e) => setTagInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(); } }}
+                                onBlur={addTag}
+                                placeholder="Enter/콤마로 추가"
+                                className="text-sm border border-slate-200 rounded px-2 py-0.5 flex-1 min-w-32 text-slate-900" />
+                        </div>
+                    </div>
+
+                    {/* 문법 카테고리 */}
+                    <div className="border-t pt-4">
+                        <label className="text-xs font-bold text-slate-500 block mb-2">문법(어법) 카테고리</label>
+                        {grammarTree.length === 0 ? (
+                            <div className="text-xs text-slate-400">카테고리가 없습니다.</div>
+                        ) : (
+                            <div className="space-y-3">
+                                {grammarTree.map((root: any) => (
+                                    <div key={root.id}>
+                                        <div className="text-[11px] font-black text-slate-700 mb-1">{root.name}</div>
+                                        <div className="grid grid-cols-2 gap-1">
+                                            {(root.children || []).map((c: any) => {
+                                                const checked = grammarIds.includes(c.id);
+                                                return (
+                                                    <label key={c.id}
+                                                        className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded cursor-pointer ${
+                                                            checked ? 'bg-purple-100 text-purple-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
+                                                        }`}>
+                                                        <input type="checkbox" checked={checked} onChange={() => toggleGrammar(c.id)} className="accent-purple-600" />
+                                                        {c.name}
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* OCR */}
+                    <div className="border-t pt-4">
+                        <label className="text-xs font-bold text-slate-500 block mb-1">OCR 본문</label>
+                        <textarea value={ocrText} onChange={(e) => setOcrText(e.target.value)}
+                            rows={8}
+                            className="w-full px-3 py-2 border border-slate-300 rounded text-sm text-slate-900 font-mono resize-y" />
+                    </div>
+                </div>
+
+                <div className="px-5 py-3 border-t bg-slate-50 flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500 mr-auto">
+                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Esc</kbd> 닫기 · <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px]">Ctrl+S</kbd> 저장
+                    </span>
+                    {savedToast && <span className="text-xs font-bold text-emerald-600">✓ 저장됨</span>}
+                    <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">닫기</button>
+                    <button onClick={save} disabled={saving}
+                        className="px-4 py-2 text-sm font-bold rounded bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-50 flex items-center gap-1.5">
+                        {saving ? '저장 중...' : '저장'}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

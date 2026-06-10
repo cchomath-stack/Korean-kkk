@@ -520,12 +520,60 @@ export default function BulkAdminPage() {
         setDrafting({ id, type, pageNum: currentPage, groupId, isExtension, x: p.x, y: p.y, w: 0, h: 0 });
     };
 
+    // 박스 그리는 중 마우스 좌표 추적 (자동 스크롤용)
+    const mousePosRef = useRef<{ x: number; y: number } | null>(null);
+    const draftingRef = useRef<Box | null>(null);
+    useEffect(() => { draftingRef.current = drafting; }, [drafting]);
+
     const onMouseMove = (e: React.MouseEvent) => {
         if (!drafting) return;
+        mousePosRef.current = { x: e.clientX, y: e.clientY };
         const p = eventToImageCoord(e);
         if (!p) return;
         setDrafting({ ...drafting, w: p.x - drafting.x, h: p.y - drafting.y });
     };
+
+    // 박스 그리기 중 가장자리 자동 스크롤
+    const isDrafting = !!drafting;
+    useEffect(() => {
+        if (!isDrafting) return;
+        const EDGE = 60;       // 가장자리 활성 영역 (px)
+        const MAX_SPEED = 18;  // 프레임당 최대 스크롤 (px)
+        let raf = 0;
+        const tick = () => {
+            const mouse = mousePosRef.current;
+            const container = pdfScrollRef.current;
+            const cur = draftingRef.current;
+            const img = imgRef.current;
+            if (mouse && container && cur && img && current) {
+                const rect = container.getBoundingClientRect();
+                let dy = 0;
+                if (mouse.y < rect.top + EDGE) {
+                    const ratio = Math.min(1, (rect.top + EDGE - mouse.y) / EDGE);
+                    dy = -MAX_SPEED * ratio;
+                } else if (mouse.y > rect.bottom - EDGE) {
+                    const ratio = Math.min(1, (mouse.y - (rect.bottom - EDGE)) / EDGE);
+                    dy = MAX_SPEED * ratio;
+                }
+                if (dy !== 0) {
+                    const before = container.scrollTop;
+                    container.scrollTop = Math.max(0, container.scrollTop + dy);
+                    // 실제 스크롤이 발생했을 때만 drafting 업데이트
+                    if (container.scrollTop !== before) {
+                        const imgRect = img.getBoundingClientRect();
+                        const sx = current.width / imgRect.width;
+                        const sy = current.height / imgRect.height;
+                        const px = (mouse.x - imgRect.left) * sx;
+                        const py = (mouse.y - imgRect.top) * sy;
+                        setDrafting((d) => d ? ({ ...d, w: px - d.x, h: py - d.y }) : null);
+                    }
+                }
+            }
+            raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, [isDrafting, current]);
 
     const onMouseUp = async () => {
         if (!drafting || !current) return;
@@ -740,17 +788,21 @@ export default function BulkAdminPage() {
 
     const saveQuestion = async (card: QueueCard) => {
         const meta = questionMetas[card.id] || { tags: [] };
-        if (card.status !== 'ready') { alert('문제가 아직 처리 중입니다.'); return; }
+        // 'ready'(신규)이거나 'saved'(수정)일 때만 진행. 그 외(uploading, saving)는 차단.
+        if (card.status !== 'ready' && card.status !== 'saved') {
+            alert('문제가 아직 처리 중입니다.'); return;
+        }
         const passageDbId = savedPassageIds[card.groupId];
         const isStandalone = card.id === card.groupId;
         if (!passageDbId && !isStandalone) {
             alert('지문 그룹을 먼저 저장하세요.');
             return;
         }
+        const isUpdate = card.status === 'saved' && card.dbId != null;
         setCards((prev) => prev.map((c) => c.id === card.id ? { ...c, status: 'saving' } : c));
         try {
             const box = boxes.find((b) => b.id === card.id);
-            const body = {
+            const body: any = {
                 passageId: passageDbId ?? null,
                 pdfDocumentId,
                 imageUrl: card.imageUrl,
@@ -763,21 +815,23 @@ export default function BulkAdminPage() {
                 pageNum: card.pageNum,
                 boxX: box?.x, boxY: box?.y, boxW: box?.w, boxH: box?.h,
             };
+            if (isUpdate) body.id = card.dbId;
             const res = await fetch('/api/admin/question', {
-                method: 'POST',
+                method: isUpdate ? 'PUT' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || `question save ${res.status}`);
+                throw new Error(err.error || `question ${isUpdate ? 'update' : 'save'} ${res.status}`);
             }
             const saved = await res.json();
-            setCards((prev) => prev.map((c) => c.id === card.id ? { ...c, status: 'saved', dbId: saved.id } : c));
+            setCards((prev) => prev.map((c) => c.id === card.id ? { ...c, status: 'saved', dbId: saved.id ?? c.dbId } : c));
         } catch (e: any) {
             console.error(e);
-            alert(`문제 저장 실패: ${e.message}`);
-            setCards((prev) => prev.map((c) => c.id === card.id ? { ...c, status: 'ready' } : c));
+            alert(`문제 ${isUpdate ? '수정' : '저장'} 실패: ${e.message}`);
+            // 실패 시 원래 status로 복원
+            setCards((prev) => prev.map((c) => c.id === card.id ? { ...c, status: isUpdate ? 'saved' : 'ready' } : c));
         }
     };
 
@@ -1409,15 +1463,15 @@ function BigImageCard({
                     {(card.status === 'ready' || saving || saved) && (
                         <>
                             <div className="flex flex-col flex-1">
-                                <div className="text-xs font-semibold text-slate-500 mb-1">OCR 결과 (편집 가능)</div>
+                                <div className="text-xs font-semibold text-slate-500 mb-1">
+                                    OCR 결과 (편집 가능){saved && <span className="ml-2 text-emerald-600">· 저장됨, 다시 편집 가능</span>}
+                                </div>
                                 <textarea
                                     value={card.ocrText || ''}
                                     onChange={(e) => onOcrChange(e.target.value)}
-                                    readOnly={saved}
+                                    disabled={saving}
                                     rows={isQuestion ? 8 : 14}
-                                    className={`w-full text-sm border rounded p-3 font-mono resize-y focus:outline-none focus:border-teal-500 ${
-                                        saved ? 'bg-slate-50 text-slate-600' : 'bg-white text-slate-900'
-                                    }`}
+                                    className="w-full text-sm border rounded p-3 font-mono resize-y focus:outline-none focus:border-teal-500 bg-white text-slate-900 disabled:bg-slate-50 disabled:text-slate-500"
                                     placeholder="OCR 결과"
                                 />
                             </div>
@@ -1425,32 +1479,32 @@ function BigImageCard({
                             {isQuestion && questionMeta && onMetaChange && onSave && (
                                 <>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <NumField label="번호" value={questionMeta.questionNo} onChange={(v) => onMetaChange({ questionNo: v })} disabled={saved} />
-                                        <SelectField label="난이도" value={questionMeta.difficulty} onChange={(v) => onMetaChange({ difficulty: v })} options={DIFFS as any} disabled={saved} />
+                                        <NumField label="번호" value={questionMeta.questionNo} onChange={(v) => onMetaChange({ questionNo: v })} disabled={saving} />
+                                        <SelectField label="난이도" value={questionMeta.difficulty} onChange={(v) => onMetaChange({ difficulty: v })} options={DIFFS as any} disabled={saving} />
                                     </div>
                                     <div>
                                         <div className="text-xs font-semibold text-slate-500 mb-1">정답</div>
-                                        <AnswerPicker value={questionMeta.answer} onChange={(v) => onMetaChange({ answer: v })} disabled={saved} />
+                                        <AnswerPicker value={questionMeta.answer} onChange={(v) => onMetaChange({ answer: v })} disabled={saving} />
                                     </div>
                                     <div>
                                         <div className="text-xs font-semibold text-slate-500 mb-1">문제 태그</div>
-                                        <TagInput tags={questionMeta.tags} onChange={(t) => onMetaChange({ tags: t })} disabled={saved} />
+                                        <TagInput tags={questionMeta.tags} onChange={(t) => onMetaChange({ tags: t })} disabled={saving} />
                                     </div>
                                     <GrammarPickerInline
                                         tree={grammarTree || []}
                                         selectedIds={questionMeta.grammarCategoryIds || []}
                                         onChange={(ids) => onMetaChange({ grammarCategoryIds: ids })}
-                                        disabled={saved}
+                                        disabled={saving}
                                     />
-                                    {!saved && (
-                                        <button onClick={onSave}
-                                            disabled={card.status !== 'ready' || saving || !canSaveQuestion}
-                                            title={!canSaveQuestion ? '지문 그룹을 먼저 저장하세요' : ''}
-                                            className="w-full px-4 py-2 text-sm font-bold rounded-lg bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                                            {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
-                                            문제 저장
-                                        </button>
-                                    )}
+                                    <button onClick={onSave}
+                                        disabled={(card.status !== 'ready' && card.status !== 'saved') || saving || !canSaveQuestion}
+                                        title={!canSaveQuestion ? '지문 그룹을 먼저 저장하세요' : ''}
+                                        className={`w-full px-4 py-2 text-sm font-bold rounded-lg text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
+                                            saved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-orange-600 hover:bg-orange-700'
+                                        }`}>
+                                        {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
+                                        {saved ? '수정 저장' : '문제 저장'}
+                                    </button>
                                 </>
                             )}
                         </>
