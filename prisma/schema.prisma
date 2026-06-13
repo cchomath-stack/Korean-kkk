@@ -83,6 +83,11 @@ model Question {
   answer          String?
   difficulty      String?
   questionNo      Int?
+  // 단독 문제(passage 없음)일 때 직접 보유할 수 있는 메타. passage 있으면 그쪽 우선.
+  year            Int?
+  month           Int?
+  grade           Int?
+  area            String?
   pdfDocumentId   Int?
   pdfDocument     PdfDocument?  @relation(fields: [pdfDocumentId], references: [id], onDelete: SetNull)
   pageNum         Int?

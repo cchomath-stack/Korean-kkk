@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
         const {
             passageId, imageUrl, ocrText,
             keywords, answer, difficulty, questionNo,
+            year, month, grade, area, // 단독 문제용 메타
             tags, // string[]
             grammarCategoryIds, // number[]
             pdfDocumentId,
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
         const grammarCatIds = Array.isArray(grammarCategoryIds)
             ? [...new Set(grammarCategoryIds.map((v: any) => parseInt(String(v), 10)).filter((n: number) => !Number.isNaN(n)))]
             : [];
+        const toIntOrNull = (v: any) => v === '' || v == null ? null : parseInt(String(v), 10);
 
         const question = await prisma.question.create({
             data: {
@@ -34,7 +36,11 @@ export async function POST(request: NextRequest) {
                 keywords,
                 answer,
                 difficulty,
-                questionNo: questionNo ? parseInt(String(questionNo)) : null,
+                questionNo: toIntOrNull(questionNo),
+                year: toIntOrNull(year),
+                month: toIntOrNull(month),
+                grade: toIntOrNull(grade),
+                area: area || null,
                 pdfDocumentId: pdfDocumentId ? parseInt(String(pdfDocumentId)) : null,
                 pageNum: pageNum ?? null,
                 boxX: boxX ?? null,
@@ -87,12 +93,13 @@ export async function PUT(request: NextRequest) {
         if (!id) return NextResponse.json({ error: 'ID가 필요합니다.' }, { status: 400 });
         const qid = parseInt(String(id), 10);
 
-        const allowed = ['ocrText', 'answer', 'difficulty', 'questionNo', 'keywords'] as const;
+        const allowed = ['ocrText', 'answer', 'difficulty', 'questionNo', 'keywords', 'year', 'month', 'grade', 'area'] as const;
+        const intFields = new Set(['questionNo', 'year', 'month', 'grade']);
         const data: any = {};
         for (const k of allowed) {
             if (k in rest) {
                 const v = (rest as any)[k];
-                if (k === 'questionNo') {
+                if (intFields.has(k)) {
                     data[k] = v === '' || v == null ? null : parseInt(String(v), 10);
                 } else {
                     data[k] = v === '' ? null : v;

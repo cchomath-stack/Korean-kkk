@@ -1141,8 +1141,8 @@ export default function AdminPage() {
                                         )}
                                         <div className="flex justify-between items-end">
                                             <div>
-                                                <p className="text-sm font-black text-slate-800">{item.passage?.year} {item.passage?.month}월</p>
-                                                <p className="text-[11px] text-slate-500 font-bold">{item.passage?.area || item.passage?.office} | {item.passage?.grade}학년</p>
+                                                <p className="text-sm font-black text-slate-800">{(item.passage?.year ?? item.year) || ''} {(item.passage?.month ?? item.month) ? `${item.passage?.month ?? item.month}월` : ''}</p>
+                                                <p className="text-[11px] text-slate-500 font-bold">{(item.passage?.area ?? item.area) || item.passage?.office || ''} {(item.passage?.grade ?? item.grade) ? `| ${item.passage?.grade ?? item.grade}학년` : ''}</p>
                                             </div>
                                             <button onClick={() => handleDeletePassage(item.passageId)} className="text-[10px] text-red-300 hover:text-red-500 underline">삭제</button>
                                         </div>
@@ -1231,12 +1231,20 @@ function EditQuestionPanel({
     const [tagInput, setTagInput] = React.useState('');
     const [grammarIds, setGrammarIds] = React.useState<number[]>(initialGrammarIds);
 
-    // 지문 레벨 필드 (passage가 있을 때만 사용)
+    // 메타 필드 — 지문 있으면 지문 기준, 없으면 문항 자체 기준
     const hasPassage = !!item.passage && !!item.passageId;
-    const [year, setYear] = React.useState<string>(item.passage?.year?.toString() || '');
-    const [month, setMonth] = React.useState<string>(item.passage?.month?.toString() || '');
-    const [grade, setGrade] = React.useState<string>(item.passage?.grade?.toString() || '');
-    const [area, setArea] = React.useState<string>(item.passage?.area || '');
+    const [year, setYear] = React.useState<string>(
+        (hasPassage ? item.passage?.year : item.year)?.toString() || ''
+    );
+    const [month, setMonth] = React.useState<string>(
+        (hasPassage ? item.passage?.month : item.month)?.toString() || ''
+    );
+    const [grade, setGrade] = React.useState<string>(
+        (hasPassage ? item.passage?.grade : item.grade)?.toString() || ''
+    );
+    const [area, setArea] = React.useState<string>(
+        (hasPassage ? item.passage?.area : item.area) || ''
+    );
 
     const [saving, setSaving] = React.useState(false);
     const [savedToast, setSavedToast] = React.useState(false);
@@ -1254,15 +1262,24 @@ function EditQuestionPanel({
     const save = React.useCallback(async () => {
         setSaving(true);
         try {
+            const qBody: any = {
+                id: item.id,
+                ocrText, questionNo, answer, difficulty,
+                tags, grammarCategoryIds: grammarIds,
+            };
+            // 단독 문제(passage 없음)일 때만 year/month/grade/area 를 Question 에 직접 저장
+            if (!hasPassage) {
+                qBody.year = year;
+                qBody.month = month;
+                qBody.grade = grade;
+                qBody.area = area;
+            }
+
             // 1) 문제 저장
             const qRes = await fetch('/api/admin/question', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    id: item.id,
-                    ocrText, questionNo, answer, difficulty,
-                    tags, grammarCategoryIds: grammarIds,
-                }),
+                body: JSON.stringify(qBody),
             });
             if (!qRes.ok) {
                 const e = await qRes.json().catch(() => ({}));
@@ -1301,20 +1318,29 @@ function EditQuestionPanel({
                 }
             }
 
+            const parsedYear = year === '' ? null : parseInt(year);
+            const parsedMonth = month === '' ? null : parseInt(month);
+            const parsedGrade = grade === '' ? null : parseInt(grade);
+            const parsedArea = area || null;
+
             // 정규화 — 갤러리 카드용 형태 유지
             onSaved({
                 ...item,
-                ocrText, questionNo: questionNo ? parseInt(questionNo) : null,
+                ocrText,
+                questionNo: questionNo ? parseInt(questionNo) : null,
                 answer, difficulty,
                 tags: (qUpdated.tags || []),
                 grammarCategories: (qUpdated.grammarCategories || []),
+                // 단독 문제는 question 자체에 메타 저장됨
+                year: hasPassage ? item.year : parsedYear,
+                month: hasPassage ? item.month : parsedMonth,
+                grade: hasPassage ? item.grade : parsedGrade,
+                area: hasPassage ? item.area : parsedArea,
+                // 지문 있을 때만 passage 갱신
                 passage: hasPassage ? {
                     ...(item.passage || {}),
                     ...(passageUpdated || {
-                        year: year === '' ? null : parseInt(year),
-                        month: month === '' ? null : parseInt(month),
-                        grade: grade === '' ? null : parseInt(grade),
-                        area: area || null,
+                        year: parsedYear, month: parsedMonth, grade: parsedGrade, area: parsedArea,
                     }),
                 } : item.passage,
             });
@@ -1352,7 +1378,18 @@ function EditQuestionPanel({
                             문제 #{item.id} 수정
                         </h3>
                         <p className="text-xs text-slate-500">
-                            {item.questionNo ? `${item.questionNo}번 · ` : ''}{item.passage?.year}.{item.passage?.month} {item.passage?.area || ''} {item.passage?.grade ? `· ${item.passage.grade}학년` : ''}
+                            {(() => {
+                                const y = item.passage?.year ?? item.year;
+                                const m = item.passage?.month ?? item.month;
+                                const g = item.passage?.grade ?? item.grade;
+                                const a = item.passage?.area ?? item.area;
+                                const parts: string[] = [];
+                                if (item.questionNo) parts.push(`${item.questionNo}번`);
+                                if (y && m) parts.push(`${y}.${m}`);
+                                if (a) parts.push(a);
+                                if (g) parts.push(`${g}학년`);
+                                return parts.join(' · ');
+                            })()}
                         </p>
                     </div>
                     <button onClick={onClose} className="text-slate-400 hover:text-slate-900 text-2xl leading-none" title="ESC">×</button>
@@ -1364,12 +1401,13 @@ function EditQuestionPanel({
                         <img src={item.imageUrl} alt="" className="w-full max-h-96 object-contain" />
                     </div>
 
-                    {/* 지문 메타 (지문 있을 때만 노출) */}
-                    {hasPassage && (
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                            <div className="text-xs font-black text-blue-900 mb-1">
-                                지문 정보 <span className="font-medium text-blue-700">(이 지문의 모든 문제에 함께 적용됨)</span>
-                            </div>
+                    {/* 메타 — 항상 노출. 지문 있으면 지문에, 없으면 문항 자체에 저장 */}
+                    <div className={`rounded-lg p-3 border ${hasPassage ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
+                        <div className={`text-xs font-black mb-1 ${hasPassage ? 'text-blue-900' : 'text-amber-900'}`}>
+                            {hasPassage ? '지문 정보' : '문항 메타'} <span className={`font-medium ${hasPassage ? 'text-blue-700' : 'text-amber-700'}`}>
+                                {hasPassage ? '(이 지문의 모든 문제에 함께 적용됨)' : '(단독 문제 — 이 문항에만 적용)'}
+                            </span>
+                        </div>
                             <div className="grid grid-cols-4 gap-2 mt-2">
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 block mb-0.5">연도</label>
@@ -1399,7 +1437,6 @@ function EditQuestionPanel({
                                 </div>
                             </div>
                         </div>
-                    )}
 
                     {/* 문제 메타 */}
                     <div className="grid grid-cols-2 gap-3">
