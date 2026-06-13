@@ -1215,6 +1215,8 @@ function EditQuestionPanel({
 }) {
     const ANSWERS = ['①', '②', '③', '④', '⑤'];
     const DIFFS = ['상', '중', '하'];
+    const AREAS = ['문학', '독서', '화작', '언매'];
+    const GRADES = ['1', '2', '3'];
 
     const initialTags: string[] = (item.tags && item.tags.length > 0)
         ? item.tags.map((qt: any) => qt.tag.name)
@@ -1228,6 +1230,14 @@ function EditQuestionPanel({
     const [tags, setTags] = React.useState<string[]>(initialTags);
     const [tagInput, setTagInput] = React.useState('');
     const [grammarIds, setGrammarIds] = React.useState<number[]>(initialGrammarIds);
+
+    // 지문 레벨 필드 (passage가 있을 때만 사용)
+    const hasPassage = !!item.passage && !!item.passageId;
+    const [year, setYear] = React.useState<string>(item.passage?.year?.toString() || '');
+    const [month, setMonth] = React.useState<string>(item.passage?.month?.toString() || '');
+    const [grade, setGrade] = React.useState<string>(item.passage?.grade?.toString() || '');
+    const [area, setArea] = React.useState<string>(item.passage?.area || '');
+
     const [saving, setSaving] = React.useState(false);
     const [savedToast, setSavedToast] = React.useState(false);
 
@@ -1244,7 +1254,8 @@ function EditQuestionPanel({
     const save = React.useCallback(async () => {
         setSaving(true);
         try {
-            const res = await fetch('/api/admin/question', {
+            // 1) 문제 저장
+            const qRes = await fetch('/api/admin/question', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1253,19 +1264,59 @@ function EditQuestionPanel({
                     tags, grammarCategoryIds: grammarIds,
                 }),
             });
-            if (!res.ok) {
-                const e = await res.json().catch(() => ({}));
-                alert('저장 실패: ' + (e.error || res.status));
+            if (!qRes.ok) {
+                const e = await qRes.json().catch(() => ({}));
+                alert('문제 저장 실패: ' + (e.error || qRes.status));
                 return;
             }
-            const updated = await res.json();
+            const qUpdated = await qRes.json();
+
+            // 2) 지문 레벨 필드가 변경됐을 때만 지문 저장
+            let passageUpdated: any = null;
+            if (hasPassage) {
+                const initial = item.passage || {};
+                const passageDirty =
+                    String(initial.year ?? '') !== year ||
+                    String(initial.month ?? '') !== month ||
+                    String(initial.grade ?? '') !== grade ||
+                    (initial.area ?? '') !== area;
+                if (passageDirty) {
+                    const pRes = await fetch('/api/admin/passage', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            id: item.passageId,
+                            year: year === '' ? null : parseInt(year),
+                            month: month === '' ? null : parseInt(month),
+                            grade: grade === '' ? null : parseInt(grade),
+                            area: area || null,
+                        }),
+                    });
+                    if (!pRes.ok) {
+                        const e = await pRes.json().catch(() => ({}));
+                        alert('지문 메타 저장 실패: ' + (e.error || pRes.status));
+                        return;
+                    }
+                    passageUpdated = await pRes.json();
+                }
+            }
+
             // 정규화 — 갤러리 카드용 형태 유지
             onSaved({
                 ...item,
                 ocrText, questionNo: questionNo ? parseInt(questionNo) : null,
                 answer, difficulty,
-                tags: (updated.tags || []),
-                grammarCategories: (updated.grammarCategories || []),
+                tags: (qUpdated.tags || []),
+                grammarCategories: (qUpdated.grammarCategories || []),
+                passage: hasPassage ? {
+                    ...(item.passage || {}),
+                    ...(passageUpdated || {
+                        year: year === '' ? null : parseInt(year),
+                        month: month === '' ? null : parseInt(month),
+                        grade: grade === '' ? null : parseInt(grade),
+                        area: area || null,
+                    }),
+                } : item.passage,
             });
             setSavedToast(true);
             setTimeout(() => setSavedToast(false), 1800);
@@ -1274,7 +1325,7 @@ function EditQuestionPanel({
         } finally {
             setSaving(false);
         }
-    }, [item, ocrText, questionNo, answer, difficulty, tags, grammarIds, onSaved]);
+    }, [item, ocrText, questionNo, answer, difficulty, tags, grammarIds, onSaved, hasPassage, year, month, grade, area]);
 
     // Esc 닫기, Ctrl+S 저장
     React.useEffect(() => {
@@ -1313,7 +1364,44 @@ function EditQuestionPanel({
                         <img src={item.imageUrl} alt="" className="w-full max-h-96 object-contain" />
                     </div>
 
-                    {/* 메타 */}
+                    {/* 지문 메타 (지문 있을 때만 노출) */}
+                    {hasPassage && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="text-xs font-black text-blue-900 mb-1">
+                                지문 정보 <span className="font-medium text-blue-700">(이 지문의 모든 문제에 함께 적용됨)</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2 mt-2">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">연도</label>
+                                    <input value={year} onChange={(e) => setYear(e.target.value)} type="number" placeholder="2025"
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">월</label>
+                                    <input value={month} onChange={(e) => setMonth(e.target.value)} type="number" placeholder="9"
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">학년</label>
+                                    <select value={grade} onChange={(e) => setGrade(e.target.value)}
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white">
+                                        <option value="">-</option>
+                                        {GRADES.map((g) => <option key={g} value={g}>{g}학년</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-0.5">영역</label>
+                                    <select value={area} onChange={(e) => setArea(e.target.value)}
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white">
+                                        <option value="">-</option>
+                                        {AREAS.map((a) => <option key={a} value={a}>{a}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 문제 메타 */}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="text-xs font-bold text-slate-500 block mb-1">번호</label>
