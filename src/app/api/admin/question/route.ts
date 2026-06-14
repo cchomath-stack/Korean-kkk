@@ -113,9 +113,11 @@ export async function PUT(request: NextRequest) {
             const cleanedTags = [...new Set(tags.map((n: string) => String(n).trim()).filter(Boolean))];
             data.tags = {
                 deleteMany: {},
-                create: cleanedTags.map((name) => ({
-                    tag: { connectOrCreate: { where: { name }, create: { name } } },
-                })),
+                ...(cleanedTags.length > 0 && {
+                    create: cleanedTags.map((name) => ({
+                        tag: { connectOrCreate: { where: { name }, create: { name } } },
+                    })),
+                }),
             };
         }
         if (Array.isArray(grammarCategoryIds)) {
@@ -137,9 +139,13 @@ export async function PUT(request: NextRequest) {
             },
         });
         return NextResponse.json(updated);
-    } catch (error) {
+    } catch (error: any) {
         console.error('Update Question Error:', error);
-        return NextResponse.json({ error: '수정 실패' }, { status: 500 });
+        // 관리자 엔드포인트이므로 실제 에러 메시지 노출 (디버그 용이성)
+        return NextResponse.json(
+            { error: '수정 실패', detail: error?.message || String(error) },
+            { status: 500 }
+        );
     }
 }
 

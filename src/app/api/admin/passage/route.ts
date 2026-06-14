@@ -112,9 +112,11 @@ export async function PUT(request: NextRequest) {
             const cleaned = [...new Set(tags.map((n: string) => String(n).trim()).filter(Boolean))];
             data.tags = {
                 deleteMany: {},
-                create: cleaned.map((name) => ({
-                    tag: { connectOrCreate: { where: { name }, create: { name } } },
-                })),
+                ...(cleaned.length > 0 && {
+                    create: cleaned.map((name) => ({
+                        tag: { connectOrCreate: { where: { name }, create: { name } } },
+                    })),
+                }),
             };
         }
 
@@ -124,9 +126,12 @@ export async function PUT(request: NextRequest) {
             include: { tags: { include: { tag: true } } },
         });
         return NextResponse.json(updated);
-    } catch (error) {
+    } catch (error: any) {
         console.error('Update Passage Error:', error);
-        return NextResponse.json({ error: '수정 실패' }, { status: 500 });
+        return NextResponse.json(
+            { error: '수정 실패', detail: error?.message || String(error) },
+            { status: 500 }
+        );
     }
 }
 
