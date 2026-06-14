@@ -107,14 +107,15 @@ export async function PUT(request: NextRequest) {
             data.questionRange = `${data.startNo}~${data.endNo}`;
         }
 
-        // 태그 갱신 (배열이 들어왔을 때만)
+        // 태그 갱신을 update의 nested write로 합쳐서 단일 트랜잭션 처리
         if (Array.isArray(tags)) {
-            await prisma.passageTag.deleteMany({ where: { passageId } });
             const cleaned = [...new Set(tags.map((n: string) => String(n).trim()).filter(Boolean))];
-            for (const name of cleaned) {
-                const t = await prisma.tag.upsert({ where: { name }, update: {}, create: { name } });
-                await prisma.passageTag.create({ data: { passageId, tagId: t.id } });
-            }
+            data.tags = {
+                deleteMany: {},
+                create: cleaned.map((name) => ({
+                    tag: { connectOrCreate: { where: { name }, create: { name } } },
+                })),
+            };
         }
 
         const updated = await prisma.passage.update({

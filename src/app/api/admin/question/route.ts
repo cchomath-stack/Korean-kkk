@@ -107,25 +107,25 @@ export async function PUT(request: NextRequest) {
             }
         }
 
-        // 태그 갱신
+        // 태그 / 문법 갱신을 update의 nested write로 합쳐서 단일 트랜잭션 처리
+        // → DB 왕복 횟수 16+ → 1 로 대폭 감소 (Neon 연결풀 압박 회피)
         if (Array.isArray(tags)) {
-            await prisma.questionTag.deleteMany({ where: { questionId: qid } });
-            const cleaned = [...new Set(tags.map((n: string) => String(n).trim()).filter(Boolean))];
-            for (const name of cleaned) {
-                const t = await prisma.tag.upsert({ where: { name }, update: {}, create: { name } });
-                await prisma.questionTag.create({ data: { questionId: qid, tagId: t.id } });
-            }
+            const cleanedTags = [...new Set(tags.map((n: string) => String(n).trim()).filter(Boolean))];
+            data.tags = {
+                deleteMany: {},
+                create: cleanedTags.map((name) => ({
+                    tag: { connectOrCreate: { where: { name }, create: { name } } },
+                })),
+            };
         }
-
-        // 문법 카테고리 갱신
         if (Array.isArray(grammarCategoryIds)) {
-            await prisma.questionGrammarCategory.deleteMany({ where: { questionId: qid } });
             const ids = [...new Set(grammarCategoryIds.map((v: any) => parseInt(String(v), 10)).filter((n: number) => !Number.isNaN(n)))];
-            if (ids.length > 0) {
-                await prisma.questionGrammarCategory.createMany({
-                    data: ids.map((cid) => ({ questionId: qid, categoryId: cid })),
-                });
-            }
+            data.grammarCategories = {
+                deleteMany: {},
+                ...(ids.length > 0 && {
+                    create: ids.map((cid) => ({ categoryId: cid })),
+                }),
+            };
         }
 
         const updated = await prisma.question.update({
