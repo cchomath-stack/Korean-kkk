@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Save, Scissors, Type, Home } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AddToCartButton } from '@/components/ExamCart';
 
 export default function AdminPage() {
     const [stage, setStage] = useState<'PASSAGE' | 'QUESTION'>('PASSAGE');
@@ -1118,10 +1119,13 @@ export default function AdminPage() {
                                         <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-md text-white text-xs font-black rounded shadow-lg">
                                             {item.questionNo}번
                                         </div>
-                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 flex-wrap p-2">
                                             <button onClick={() => openEditPanel(item)} className="p-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-bold text-xs">수정</button>
                                             <button onClick={() => openGrammarModal(item)} className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-xs">문법</button>
                                             <button onClick={() => handleDeleteQuestion(item.id)} className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold text-xs">삭제</button>
+                                            <div onClick={(e) => e.stopPropagation()}>
+                                                <AddToCartButton kind="question" questionId={item.id} passageId={item.passageId ?? undefined} hasPassageQuestions={!!item.passageId} compact />
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="p-4">

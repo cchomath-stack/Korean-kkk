@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Search, FileText, ChevronRight, Loader2, Info } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { AddToCartButton } from '@/components/ExamCart';
 
 export default function LandingPage() {
   const [query, setQuery] = useState('');
@@ -183,24 +184,29 @@ export default function LandingPage() {
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {results.passages.map((p) => (
-                    <Link key={p.id} href={`/viewer/${p.id}`} className="group bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all">
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="p-3 bg-teal-50 rounded-2xl text-teal-500 group-hover:bg-teal-600 group-hover:text-white transition-colors">
-                          <FileText className="w-6 h-6" />
+                    <div key={p.id} className="relative">
+                      <Link href={`/viewer/${p.id}`} className="group block bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all">
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="p-3 bg-teal-50 rounded-2xl text-teal-500 group-hover:bg-teal-600 group-hover:text-white transition-colors">
+                            <FileText className="w-6 h-6" />
+                          </div>
+                          <span className="text-xs font-bold text-slate-400">{p.year}.{p.month} {p.grade}학년</span>
                         </div>
-                        <span className="text-xs font-bold text-slate-400">{p.year}.{p.month} {p.grade}학년</span>
-                      </div>
-                      <h4 className="text-lg font-bold text-slate-800 mb-2 truncate">
-                        {p.source || '공통'} {p.questionRange}번 지문
-                      </h4>
-                      <p className="text-sm text-slate-500 line-clamp-2 leading-relaxed mb-6 italic">
-                        "{p.ocrText}"
-                      </p>
-                      <div className="flex items-center text-teal-600 text-sm font-bold">
-                        뷰어로 이동
-                        <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
-                      </div>
-                    </Link>
+                        <h4 className="text-lg font-bold text-slate-800 mb-2 truncate">
+                          {p.source || '공통'} {p.questionRange}번 지문
+                        </h4>
+                        <p className="text-sm text-slate-500 line-clamp-2 leading-relaxed mb-6 italic">
+                          "{p.ocrText}"
+                        </p>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center text-teal-600 text-sm font-bold">
+                            뷰어로 이동
+                            <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                          </div>
+                          <AddToCartButton kind="passage" passageId={p.id} />
+                        </div>
+                      </Link>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -215,7 +221,10 @@ export default function LandingPage() {
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
                   {results.questions.map((q) => (
-                    <Link key={q.id} href={`/viewer/${q.passageId || q.id}`} className="group bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all flex flex-col overflow-hidden">
+                    <Link key={q.id} href={`/viewer/${q.passageId || q.id}`} className="group bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all flex flex-col overflow-hidden relative">
+                      <div className="absolute top-3 left-3 z-10">
+                        <AddToCartButton kind="question" questionId={q.id} passageId={q.passageId ?? undefined} hasPassageQuestions={!!q.passageId} compact />
+                      </div>
                       <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden flex items-center justify-center p-4">
                         <img src={q.imageUrl} alt="Question" className="max-w-full max-h-full object-contain group-hover:scale-105 transition-transform duration-500" />
                         <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md text-white text-xs font-black rounded-lg shadow-xl">

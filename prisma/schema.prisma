@@ -19,25 +19,25 @@ model User {
 }
 
 model Passage {
-  id              Int             @id @default(autoincrement())
-  imageUrl        String?         // legacy: 단일 이미지 URL. 새 코드는 images 사용
-  ocrText         String?
-  year            Int?
-  month           Int?
-  grade           Int?
-  source          String?
-  office          String?         // legacy
-  area            String?         // 문학 / 독서 / 화작 / 언매
-  startNo         Int?
-  endNo           Int?
-  questionRange   String?
-  pdfDocumentId   Int?
-  pdfDocument     PdfDocument?    @relation(fields: [pdfDocumentId], references: [id], onDelete: SetNull)
-  questions       Question[]
-  images          PassageImage[]
-  tags            PassageTag[]
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  id            Int            @id @default(autoincrement())
+  imageUrl      String? // legacy: 단일 이미지 URL. 새 코드는 images 사용
+  ocrText       String?
+  year          Int?
+  month         Int?
+  grade         Int?
+  source        String?
+  office        String? // legacy
+  area          String? // 문학 / 독서 / 화작 / 언매
+  startNo       Int?
+  endNo         Int?
+  questionRange String?
+  pdfDocumentId Int?
+  pdfDocument   PdfDocument?   @relation(fields: [pdfDocumentId], references: [id], onDelete: SetNull)
+  questions     Question[]
+  images        PassageImage[]
+  tags          PassageTag[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   @@index([pdfDocumentId])
 }
@@ -49,8 +49,8 @@ model PassageImage {
   imageUrl  String
   ocrText   String?
   order     Int      @default(0) // 단별 순서
-  pageNum   Int?     // 원본 PDF 페이지
-  boxX      Float?   // 원본 픽셀 좌표 (scale 2.0 기준)
+  pageNum   Int? // 원본 PDF 페이지
+  boxX      Float? // 원본 픽셀 좌표 (scale 2.0 기준)
   boxY      Float?
   boxW      Float?
   boxH      Float?
@@ -60,45 +60,45 @@ model PassageImage {
 }
 
 model PdfDocument {
-  id          Int        @id @default(autoincrement())
-  name        String
-  blobUrl     String     // Vercel Blob URL
-  fileHash    String     @unique // SHA-256 (중복 PDF 감지)
-  pageCount   Int?
+  id           Int        @id @default(autoincrement())
+  name         String
+  blobUrl      String // Vercel Blob URL
+  fileHash     String     @unique // SHA-256 (중복 PDF 감지)
+  pageCount    Int?
   uploadedById Int?
-  createdAt   DateTime   @default(now())
-  passages    Passage[]
-  questions   Question[]
+  createdAt    DateTime   @default(now())
+  passages     Passage[]
+  questions    Question[]
 
   @@index([createdAt])
 }
 
 model Question {
-  id              Int           @id @default(autoincrement())
-  passageId       Int?
-  passage         Passage?      @relation(fields: [passageId], references: [id])
-  imageUrl        String
-  ocrText         String?
-  keywords        String?       // legacy
-  answer          String?
-  difficulty      String?
-  questionNo      Int?
+  id                Int                       @id @default(autoincrement())
+  passageId         Int?
+  passage           Passage?                  @relation(fields: [passageId], references: [id])
+  imageUrl          String
+  ocrText           String?
+  keywords          String? // legacy
+  answer            String?
+  difficulty        String?
+  questionNo        Int?
   // 단독 문제(passage 없음)일 때 직접 보유할 수 있는 메타. passage 있으면 그쪽 우선.
-  year            Int?
-  month           Int?
-  grade           Int?
-  area            String?
-  pdfDocumentId   Int?
-  pdfDocument     PdfDocument?  @relation(fields: [pdfDocumentId], references: [id], onDelete: SetNull)
-  pageNum         Int?
-  boxX            Float?
-  boxY            Float?
-  boxW            Float?
-  boxH            Float?
-  tags            QuestionTag[]
+  year              Int?
+  month             Int?
+  grade             Int?
+  area              String?
+  pdfDocumentId     Int?
+  pdfDocument       PdfDocument?              @relation(fields: [pdfDocumentId], references: [id], onDelete: SetNull)
+  pageNum           Int?
+  boxX              Float?
+  boxY              Float?
+  boxW              Float?
+  boxH              Float?
+  tags              QuestionTag[]
   grammarCategories QuestionGrammarCategory[]
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
 
   @@index([pdfDocumentId])
 }
@@ -114,8 +114,8 @@ model Tag {
 model PassageTag {
   passageId Int
   tagId     Int
-  passage   Passage @relation(fields: [passageId], references: [id], onDelete: Cascade)
-  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  passage   Passage  @relation(fields: [passageId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
   @@id([passageId, tagId])
@@ -155,4 +155,42 @@ model QuestionGrammarCategory {
 
   @@id([questionId, categoryId])
   @@index([categoryId])
+}
+
+// 시험지 (Exam Paper) — admin이 만드는 출제 단위
+// status: "draft" = 현재 작업중 (사용자당 1개만), "saved" = 출제 완료/저장됨
+model ExamSet {
+  id          Int        @id @default(autoincrement())
+  ownerId     Int // 소유자 (User.id). draft는 사용자당 1개.
+  status      String     @default("draft") // draft | saved
+  title       String? // 시험지 제목
+  subTitle    String? // 소제목 (예: "고1 2025년 3월 - 교육청 모의평가")
+  academyName String? // 학원명
+  grade       Int? // 학년
+  durationMin Int? // 시험 시간(분)
+  totalScore  Int? // 총점
+  pdfUrl      String? // 출제 후 저장된 PDF URL (선택)
+  items       ExamItem[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([ownerId, status])
+}
+
+// 시험지 안에 담긴 항목(지문 세트 또는 단독 문제)
+// kind="passage" → passageId 있음 (지문 + 그 지문의 문제들 통째)
+// kind="question" → questionId 있음 (단독 문제 또는 "문제만 담기" 선택한 경우)
+model ExamItem {
+  id           Int      @id @default(autoincrement())
+  examSetId    Int
+  examSet      ExamSet  @relation(fields: [examSetId], references: [id], onDelete: Cascade)
+  kind         String // "passage" | "question"
+  passageId    Int?
+  questionId   Int?
+  sectionLabel String? // 보라색 태그용 (예: "기출 문제", "변형 문제 1")
+  order        Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@unique([examSetId, kind, passageId, questionId])
+  @@index([examSetId])
 }
