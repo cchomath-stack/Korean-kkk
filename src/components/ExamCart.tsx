@@ -148,7 +148,7 @@ function FloatingCartBar() {
     const count = exam.items.length;
 
     return (
-        <div className="fixed top-4 right-4 z-[60] pointer-events-none">
+        <div className="fixed top-4 left-4 z-[60] pointer-events-none">
             <Link
                 href="/exam-builder"
                 className={`pointer-events-auto group flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border transition-all duration-200 ${

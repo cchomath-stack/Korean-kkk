@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { ChevronLeft, Info, Search, BookOpen, Tag, HelpCircle, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
+import { AddToCartButton } from '@/components/ExamCart';
 
 export default function ViewerPage() {
     const params = useParams();
@@ -84,6 +85,7 @@ export default function ViewerPage() {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
+                        <AddToCartButton kind="question" questionId={q.id} />
                         <Link href="/" className="flex items-center gap-2 px-5 py-2.5 bg-teal-600 text-white rounded-xl text-sm font-black hover:bg-teal-700 transition-all shadow-lg shadow-teal-100">
                             <Search className="w-4 h-4" />
                             다른 문제 검색
@@ -182,6 +184,7 @@ export default function ViewerPage() {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
+                    <AddToCartButton kind="passage" passageId={passage.id} />
                     <Link href="/" className="flex items-center gap-2 px-5 py-2.5 bg-teal-600 text-white rounded-xl text-sm font-black hover:bg-teal-700 transition-all shadow-lg shadow-teal-100">
                         <Search className="w-4 h-4" />
                         다른 문제 검색
@@ -245,7 +248,7 @@ export default function ViewerPage() {
                                             <span className="w-10 h-10 bg-teal-600 text-white rounded-2xl flex items-center justify-center text-lg">{q.questionNo}</span>
                                             번 문제
                                         </h3>
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-2 items-center">
                                             <span className={cn(
                                                 "text-[11px] px-3 py-1 rounded-xl font-black uppercase border",
                                                 q.difficulty === '상' ? "bg-red-50 text-red-600 border-red-100" :
@@ -253,6 +256,7 @@ export default function ViewerPage() {
                                             )}>
                                                 난이도 {q.difficulty || '중'}
                                             </span>
+                                            <AddToCartButton kind="question" questionId={q.id} passageId={passage.id} hasPassageQuestions compact />
                                         </div>
                                     </div>
                                     <div className="p-10">

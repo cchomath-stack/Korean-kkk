@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin } from '@/lib/session';
-import { renderToStaticMarkup } from 'react-dom/server';
-import React from 'react';
-import { ExamPaper } from '@/components/ExamPaper';
 
 // Puppeteer + Chromium은 Node.js 런타임에서만 동작 (Edge 런타임 불가)
+// react-dom/server, React, ExamPaper는 dynamic import로 로드 (Next.js 16 API route는 react-dom/server 정적 import 불가)
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -101,7 +99,12 @@ export async function GET(request: NextRequest) {
         }));
         const hydratedExam = { ...exam, items: hydratedItems };
 
-        // ExamPaper 컴포넌트를 SSR로 정적 HTML 생성
+        // ExamPaper 컴포넌트를 SSR로 정적 HTML 생성 (dynamic import - Next.js 16 호환)
+        const [{ renderToStaticMarkup }, React, { ExamPaper }] = await Promise.all([
+            import('react-dom/server'),
+            import('react'),
+            import('@/components/ExamPaper'),
+        ]);
         const bodyHtml = renderToStaticMarkup(
             React.createElement(ExamPaper, { exam: hydratedExam as any, showOriginalNo })
         );
