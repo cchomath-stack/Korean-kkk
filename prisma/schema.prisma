@@ -194,3 +194,85 @@ model ExamItem {
   @@unique([examSetId, kind, passageId, questionId])
   @@index([examSetId])
 }
+
+// === 오답워크북 ===
+
+// 학원 마스터 — 학원 별 코드 + 기본 디자인 매핑
+model Academy {
+  id                Int                @id @default(autoincrement())
+  name              String             @unique
+  code              String             @unique // 학생이 입력할 코드 (예: OREUM-2026)
+  defaultDesign     String             @default("oreum") // "mexx" | "oreum"
+  logoUrl           String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  wrongNoteRequests WrongNoteRequest[]
+}
+
+// 회차(시험지 풀) — 학생이 풀 수 있는 100~200문제 모음
+// 시험지 제작용 ExamSet과는 별개 모델 (학생용 풀)
+model ExamRound {
+  id                 Int                @id @default(autoincrement())
+  title              String // 회차 이름 (예: "2026 6월 모의평가 1회")
+  subTitle           String? // 서브 (예: "독서·문학 영역")
+  grade              Int? // 대상 학년
+  isPublic           Boolean            @default(false) // 학생에게 보이는지
+  requireAcademyCode Boolean            @default(true) // 학원 코드 필요 여부
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  items              RoundItem[]
+  wrongNoteRequests  WrongNoteRequest[]
+
+  @@index([isPublic])
+}
+
+// 회차에 담긴 항목 (지문 세트 또는 단독 문제) — ExamItem과 같은 구조
+model RoundItem {
+  id           Int               @id @default(autoincrement())
+  roundId      Int
+  round        ExamRound         @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  kind         String // "passage" | "question"
+  passageId    Int?
+  questionId   Int?
+  order        Int               @default(0)
+  createdAt    DateTime          @default(now())
+  wrongAnswers WrongNoteAnswer[]
+
+  @@unique([roundId, kind, passageId, questionId])
+  @@index([roundId])
+}
+
+// 학생 오답노트 요청 — 학생 외부 페이지에서 제출됨
+model WrongNoteRequest {
+  id          Int               @id @default(autoincrement())
+  academyId   Int?
+  academy     Academy?          @relation(fields: [academyId], references: [id], onDelete: SetNull)
+  roundId     Int
+  round       ExamRound         @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  studentName String
+  school      String?
+  grade       Int?
+  design      String            @default("oreum") // 출력 디자인 (학원의 default 따라감)
+  status      String            @default("pending") // pending | processed
+  pdfUrl      String?
+  createdAt   DateTime          @default(now())
+  processedAt DateTime?
+  answers     WrongNoteAnswer[]
+
+  @@index([status, createdAt])
+  @@index([academyId])
+  @@index([roundId])
+}
+
+// 학생이 틀렸다고 체크한 항목 (RoundItem 참조)
+model WrongNoteAnswer {
+  id          Int              @id @default(autoincrement())
+  requestId   Int
+  request     WrongNoteRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  roundItemId Int
+  roundItem   RoundItem        @relation(fields: [roundItemId], references: [id], onDelete: Cascade)
+  createdAt   DateTime         @default(now())
+
+  @@unique([requestId, roundItemId])
+  @@index([requestId])
+}
