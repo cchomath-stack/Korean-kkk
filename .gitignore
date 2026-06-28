@@ -44,3 +44,7 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# Reference materials (kept locally, not pushed)
+hanapi_csmbird-main_*/
+오답워크북_파이프라인_참고스크립트*

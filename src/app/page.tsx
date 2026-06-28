@@ -83,6 +83,9 @@ export default function LandingPage() {
             <Link href="/admin" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
               데이터 관리
             </Link>
+            <Link href="/exam-builder" className="text-sm font-black text-teal-600 hover:text-teal-800 transition-colors flex items-center gap-1">
+              📝 시험지 제작
+            </Link>
             <Link href="/admin/users" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
               회원 관리
             </Link>

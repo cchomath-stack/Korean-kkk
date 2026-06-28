@@ -22,8 +22,9 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
     ChevronLeft, GripVertical, Trash2, FileText, BookOpen,
-    Eye, Save, FileDown, Loader2, AlertCircle, X,
+    Eye, Save, FileDown, Loader2, AlertCircle, X, Search, Plus, Check,
 } from 'lucide-react';
+import { AddToCartButton, useExamCart } from '@/components/ExamCart';
 
 type HydratedItem = {
     id: number;
@@ -50,6 +51,7 @@ type HydratedExam = {
 
 export default function ExamBuilderPage() {
     const router = useRouter();
+    const cart = useExamCart();
     const [exam, setExam] = useState<HydratedExam | null>(null);
     const [loading, setLoading] = useState(true);
     const [savingMeta, setSavingMeta] = useState(false);
@@ -70,6 +72,13 @@ export default function ExamBuilderPage() {
     }, [router]);
 
     useEffect(() => { fetchExam(); }, [fetchExam]);
+
+    // 카트 항목 개수가 바뀌면(검색 패널에서 담거나 빼면) hydrated 데이터 재로드
+    const cartCount = cart.exam?.items.length ?? 0;
+    useEffect(() => {
+        if (!loading) fetchExam();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cartCount]);
 
     const updateMeta = useCallback(async (patch: Partial<HydratedExam>) => {
         if (!exam) return;
@@ -245,6 +254,8 @@ export default function ExamBuilderPage() {
                             </p>
                         )}
                     </div>
+                    <SearchPanel onAdded={fetchExam} />
+
                     <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
                         <p className="text-xs font-bold text-amber-900 leading-relaxed">
                             <strong>💡 사용법</strong><br />
@@ -461,6 +472,120 @@ function QuestionPreview({ question }: { question: any }) {
                     {question.questionNo ? `${question.questionNo}번` : '번호 없음'} {meta && `· ${meta}`}
                 </p>
                 <p className="text-[11px] text-slate-500 line-clamp-3 italic">{question.ocrText?.slice(0, 160) || ''}</p>
+            </div>
+        </div>
+    );
+}
+
+// === 사이드 검색 패널 — exam-builder 안에서 직접 검색하고 담을 수 있게 ===
+function SearchPanel({ onAdded }: { onAdded: () => void }) {
+    const [query, setQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
+    const [results, setResults] = useState<{ passages: any[]; questions: any[] } | null>(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedQuery(query), 400);
+        return () => clearTimeout(t);
+    }, [query]);
+
+    useEffect(() => {
+        if (!debouncedQuery.trim()) {
+            setResults(null);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            try {
+                const res = await fetch(`/api/search?q=${encodeURIComponent(debouncedQuery)}`);
+                if (res.ok && !cancelled) setResults(await res.json());
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [debouncedQuery]);
+
+    const totalResults = (results?.passages.length || 0) + (results?.questions.length || 0);
+
+    return (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 bg-gradient-to-r from-teal-50 to-white">
+                <div className="flex items-center gap-2 mb-2">
+                    <Search className="w-4 h-4 text-teal-600" />
+                    <h2 className="text-sm font-black text-slate-700">문제 검색해서 담기</h2>
+                </div>
+                <div className="relative">
+                    <input
+                        type="text"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="본문, #해시태그, 영역..."
+                        className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-200 rounded-xl bg-white focus:border-teal-400 focus:ring-2 focus:ring-teal-100 outline-none"
+                    />
+                    <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
+                    {query && (
+                        <button
+                            onClick={() => { setQuery(''); setResults(null); }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-300 hover:text-slate-600"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    )}
+                </div>
+                {results && (
+                    <p className="text-[10px] text-slate-400 font-bold mt-2">
+                        지문 {results.passages.length} · 문제 {results.questions.length}
+                    </p>
+                )}
+            </div>
+
+            <div className="max-h-[480px] overflow-y-auto">
+                {loading && (
+                    <div className="flex justify-center py-8">
+                        <Loader2 className="w-5 h-5 animate-spin text-teal-500" />
+                    </div>
+                )}
+                {!loading && !results && (
+                    <div className="px-4 py-8 text-center">
+                        <Search className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                        <p className="text-xs text-slate-400 font-bold">검색어를 입력하세요</p>
+                    </div>
+                )}
+                {!loading && results && totalResults === 0 && (
+                    <div className="px-4 py-8 text-center">
+                        <p className="text-xs text-slate-400 font-bold">검색 결과 없음</p>
+                    </div>
+                )}
+                {!loading && results && results.passages.map((p: any) => (
+                    <div key={`p-${p.id}`} className="px-4 py-3 border-b border-slate-50 hover:bg-slate-50 flex items-start gap-2">
+                        <FileText className="w-4 h-4 text-teal-500 flex-shrink-0 mt-0.5" />
+                        <div className="flex-grow min-w-0">
+                            <p className="text-[11px] font-black text-slate-700 truncate">
+                                지문 · {p.year}.{p.month} {p.grade}학년 {p.questionRange ? `${p.questionRange}번` : ''}
+                            </p>
+                            <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">{p.ocrText?.slice(0, 80) || ''}</p>
+                        </div>
+                        <div onClick={(e) => e.stopPropagation()}>
+                            <AddToCartButton kind="passage" passageId={p.id} compact />
+                        </div>
+                    </div>
+                ))}
+                {!loading && results && results.questions.map((q: any) => (
+                    <div key={`q-${q.id}`} className="px-4 py-3 border-b border-slate-50 hover:bg-slate-50 flex items-start gap-2">
+                        <img src={q.imageUrl} alt="" className="w-12 h-12 object-cover rounded border border-slate-100 flex-shrink-0" />
+                        <div className="flex-grow min-w-0">
+                            <p className="text-[11px] font-black text-slate-700 truncate">
+                                {q.questionNo ? `${q.questionNo}번` : '문제'} · {q.passage?.year ?? q.year ?? ''}.{q.passage?.month ?? q.month ?? ''} {q.passage?.grade ?? q.grade ?? ''}학년
+                            </p>
+                            <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">{q.ocrText?.slice(0, 80) || ''}</p>
+                        </div>
+                        <div onClick={(e) => e.stopPropagation()}>
+                            <AddToCartButton kind="question" questionId={q.id} passageId={q.passageId ?? undefined} hasPassageQuestions={!!q.passageId} compact />
+                        </div>
+                    </div>
+                ))}
             </div>
         </div>
     );
