@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft, Download, Loader2, AlertCircle, Pencil, CheckCircle2 } from 'lucide-react';
 import { ExamPaper, type ExamHydrated } from '@/components/ExamPaper';
+import { ImageAdjustModal, type AdjustableItem } from '@/components/ImageAdjustModal';
 
 export default function ExamPreviewPage() {
     const params = useParams();
@@ -16,18 +17,17 @@ export default function ExamPreviewPage() {
     const [downloading, setDownloading] = useState(false);
     const [saved, setSaved] = useState(false);
     const [showOriginalNo, setShowOriginalNo] = useState(true);
+    const [adjustingItem, setAdjustingItem] = useState<AdjustableItem | null>(null);
 
-    useEffect(() => {
-        const load = async () => {
-            try {
-                const res = await fetch(`/api/admin/exam-set/hydrated?id=${id}`);
-                if (res.ok) setExam(await res.json());
-            } finally {
-                setLoading(false);
-            }
-        };
-        load();
-    }, [id]);
+    const load = async () => {
+        try {
+            const res = await fetch(`/api/admin/exam-set/hydrated?id=${id}`);
+            if (res.ok) setExam(await res.json());
+        } finally {
+            setLoading(false);
+        }
+    };
+    useEffect(() => { load(); }, [id]);
 
     const handleDownload = async () => {
         if (!exam) return;
@@ -147,7 +147,27 @@ export default function ExamPreviewPage() {
                 </div>
             </header>
 
-            <ExamPaper exam={exam} showOriginalNo={showOriginalNo} />
+            <div className="bg-amber-50 border-b border-amber-100 px-6 py-2 text-center text-xs font-bold text-amber-800">
+                💡 문제나 지문에 마우스를 올리면 우측 상단에 <span className="font-black">[✏️ 이미지 조정]</span> 버튼이 나타나요. 누르면 크기·정렬·자르기 가능.
+            </div>
+
+            <ExamPaper
+                exam={exam}
+                showOriginalNo={showOriginalNo}
+                onAdjustItem={(itemId) => {
+                    const it = exam.items.find(i => i.id === itemId);
+                    if (it) setAdjustingItem(it as any);
+                }}
+            />
+
+            {adjustingItem && (
+                <ImageAdjustModal
+                    item={adjustingItem}
+                    examSetId={exam.id}
+                    onClose={() => setAdjustingItem(null)}
+                    onSaved={() => { setAdjustingItem(null); load(); }}
+                />
+            )}
         </div>
     );
 }

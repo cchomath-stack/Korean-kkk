@@ -33,9 +33,9 @@ type ImgOpts = {
     cropRight: number;
 };
 type FlatBlock =
-    | { type: 'section'; label: string; subTitle: string | null }
-    | { type: 'passage'; imageUrl: string; spanFull: boolean; opts: ImgOpts }
-    | { type: 'question'; imageUrl: string; displayNo: number; originalNo: number | null; long: boolean; opts: ImgOpts };
+    | { type: 'section'; label: string; subTitle: string | null; itemId?: number }
+    | { type: 'passage'; imageUrl: string; spanFull: boolean; opts: ImgOpts; itemId: number }
+    | { type: 'question'; imageUrl: string; displayNo: number; originalNo: number | null; long: boolean; opts: ImgOpts; itemId: number };
 
 function itemOpts(it: any): ImgOpts {
     return {
@@ -66,7 +66,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
                 ? it.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
                 : (it.passage.imageUrl ? [it.passage.imageUrl] : []);
             for (const imgUrl of passageImages) {
-                blocks.push({ type: 'passage', imageUrl: imgUrl, spanFull: false, opts: o });
+                blocks.push({ type: 'passage', imageUrl: imgUrl, spanFull: false, opts: o, itemId: it.id });
             }
             const questions = it.passage.questions || [];
             for (const q of questions) {
@@ -77,6 +77,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
                     originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
                     long: false,
                     opts: o,
+                    itemId: it.id,
                 });
             }
         } else if (it.kind === 'question' && it.question) {
@@ -88,6 +89,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
                 originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
                 long: false,
                 opts: o,
+                itemId: it.id,
             });
         }
     }
@@ -123,11 +125,12 @@ function estimateLong(q: any): boolean {
 type ExamPaperProps = {
     exam: ExamHydrated;
     showOriginalNo?: boolean;
+    onAdjustItem?: (itemId: number) => void; // 화면 미리보기 전용 (PDF에선 omit)
 };
 
 // HTML/CSS로 시험지 렌더링.
 // Puppeteer에 그대로 전달해 PDF로 변환할 수 있도록 print 친화적인 CSS 사용.
-export function ExamPaper({ exam, showOriginalNo = true }: ExamPaperProps) {
+export function ExamPaper({ exam, showOriginalNo = true, onAdjustItem }: ExamPaperProps) {
     const blocks = flattenExam(exam, { showOriginalNo });
 
     return (
@@ -144,7 +147,7 @@ export function ExamPaper({ exam, showOriginalNo = true }: ExamPaperProps) {
                 {/* 본문 (2단) */}
                 <main className="exam-body">
                     {blocks.map((b, idx) => (
-                        <ExamBlock key={idx} block={b} />
+                        <ExamBlock key={idx} block={b} onAdjustItem={onAdjustItem} />
                     ))}
                 </main>
 
@@ -231,7 +234,20 @@ function ImgWithOpts({ src, alt, opts }: { src: string; alt: string; opts: ImgOp
     );
 }
 
-function ExamBlock({ block }: { block: FlatBlock }) {
+function AdjustOverlay({ onClick }: { onClick: () => void }) {
+    return (
+        <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onClick(); }}
+            className="exam-adjust-btn"
+            title="이미지 조정 (크기 · 정렬 · 자르기)"
+        >
+            ✏️ 이미지 조정
+        </button>
+    );
+}
+
+function ExamBlock({ block, onAdjustItem }: { block: FlatBlock; onAdjustItem?: (itemId: number) => void }) {
     if (block.type === 'section') {
         return (
             <div className="exam-block exam-block-section">
@@ -244,16 +260,17 @@ function ExamBlock({ block }: { block: FlatBlock }) {
     }
     if (block.type === 'passage') {
         return (
-            <div className={`exam-block exam-block-passage ${block.spanFull ? 'span-full' : ''}`}>
+            <div className={`exam-block exam-block-passage ${block.spanFull ? 'span-full' : ''} ${onAdjustItem ? 'has-adjust' : ''}`}>
                 <div className="exam-passage-box">
                     <ImgWithOpts src={block.imageUrl} alt="passage" opts={block.opts} />
                 </div>
+                {onAdjustItem && <AdjustOverlay onClick={() => onAdjustItem(block.itemId)} />}
             </div>
         );
     }
     // question
     return (
-        <div className={`exam-block exam-block-question ${block.long ? 'long' : ''}`}>
+        <div className={`exam-block exam-block-question ${block.long ? 'long' : ''} ${onAdjustItem ? 'has-adjust' : ''}`}>
             <div className="exam-question-no-row">
                 <span className="exam-question-no">{block.displayNo}.</span>
                 {block.originalNo != null && (
@@ -261,6 +278,7 @@ function ExamBlock({ block }: { block: FlatBlock }) {
                 )}
             </div>
             <ImgWithOpts src={block.imageUrl} alt={`q-${block.displayNo}`} opts={block.opts} />
+            {onAdjustItem && <AdjustOverlay onClick={() => onAdjustItem(block.itemId)} />}
         </div>
     );
 }
@@ -503,6 +521,35 @@ const EXAM_PAPER_CSS = `
     margin: 0;
 }
 
+/* 이미지 조정 버튼 (화면 미리보기 전용 — 인쇄 시 숨김) */
+.exam-block.has-adjust {
+    position: relative;
+}
+.exam-adjust-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 10;
+    background: rgba(13,148,136,0.95);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 10pt;
+    font-weight: 700;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, transform 0.15s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.exam-block.has-adjust:hover .exam-adjust-btn {
+    opacity: 1;
+}
+.exam-adjust-btn:hover {
+    background: rgba(15,118,110,1);
+    transform: scale(1.05);
+}
+
 /* Screen-only preview tweaks */
 @media screen {
     .exam-paper-root {
@@ -513,5 +560,8 @@ const EXAM_PAPER_CSS = `
         margin: 0 auto 20px auto;
         box-shadow: 0 10px 40px rgba(0,0,0,0.15);
     }
+}
+@media print {
+    .exam-adjust-btn { display: none !important; }
 }
 `;
