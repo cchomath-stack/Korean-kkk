@@ -536,7 +536,7 @@ function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
     const save = async () => {
         setSaving(true);
         try {
-            await fetch('/api/admin/exam-set/item', {
+            const res = await fetch('/api/admin/exam-set/item', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -548,7 +548,14 @@ function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
                     }],
                 }),
             });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(`저장 실패: ${err.detail || err.error || res.statusText}`);
+                return;
+            }
             onSaved();
+        } catch (e: any) {
+            alert(`저장 중 오류: ${e?.message || String(e)}`);
         } finally {
             setSaving(false);
         }

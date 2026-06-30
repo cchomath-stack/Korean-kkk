@@ -306,7 +306,7 @@ const EXAM_PAPER_CSS = `
 
 .exam-page {
     width: 210mm;
-    min-height: 297mm;
+    height: 297mm;
     padding: 18mm 14mm 16mm 14mm;
     box-sizing: border-box;
     background: white;
@@ -314,6 +314,7 @@ const EXAM_PAPER_CSS = `
     position: relative;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 .exam-page:last-child {
@@ -395,9 +396,11 @@ const EXAM_PAPER_CSS = `
 .exam-body {
     column-count: 2;
     column-gap: 8mm;
-    column-rule: 1px solid #1f2937;
-    column-fill: auto;
-    flex-grow: 1;
+    column-rule: 1.2px solid #1f2937;
+    column-fill: balance;
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
     font-size: 10.5pt;
     line-height: 1.55;
 }
@@ -407,11 +410,16 @@ const EXAM_PAPER_CSS = `
     page-break-inside: avoid;
     -webkit-column-break-inside: avoid;
     margin-bottom: 5mm;
+    /* 각 문제/지문이 다음 단으로 자연스럽게 흐르되 한 단에 한 항목씩 깔끔히 들어가도록 */
+    break-after: column;
+    -webkit-column-break-after: always;
 }
 
 /* 섹션 라벨(보라 태그)만 양 단 가로지름. 지문/문제는 모두 한 단 안에 통째로. */
 .exam-block-section {
     column-span: all;
+    break-after: auto;
+    -webkit-column-break-after: auto;
 }
 
 .exam-passage-box {
