@@ -38,9 +38,18 @@ function flattenAnswers(req: WrongNoteRequestData): FlatBlock[] {
 
     for (const a of req.answers) {
         if (a.roundItem.kind === 'passage' && a.passage) {
-            const passageImg = a.passage.imageUrl || a.passage.images?.[0]?.imageUrl;
-            if (passageImg) {
-                blocks.push({ type: 'passage', imageUrl: passageImg, section: passageSectionLabel(a.passage) });
+            // 지문이 여러 조각(PassageImage[])으로 쪼개져 저장된 경우 모두 출력
+            const passageImages: string[] = a.passage.images && a.passage.images.length > 0
+                ? a.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
+                : (a.passage.imageUrl ? [a.passage.imageUrl] : []);
+            let firstImage = true;
+            for (const imgUrl of passageImages) {
+                blocks.push({
+                    type: 'passage',
+                    imageUrl: imgUrl,
+                    section: firstImage ? passageSectionLabel(a.passage) : undefined,
+                });
+                firstImage = false;
             }
             // 지문에 속한 문제들 — 모두 출력 (학생이 그 지문의 일부만 틀려도 지문은 통째로 보여줘야 풀이 가능)
             const questions = a.passage.questions || [];

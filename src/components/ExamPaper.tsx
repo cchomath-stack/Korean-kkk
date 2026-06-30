@@ -43,10 +43,13 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
         }
 
         if (it.kind === 'passage' && it.passage) {
-            const passageImg = it.passage.imageUrl || it.passage.images?.[0]?.imageUrl;
-            if (passageImg) {
-                // 지문도 기본은 한 단 안에 들어감. break-inside: avoid가 자동 처리.
-                blocks.push({ type: 'passage', imageUrl: passageImg, spanFull: false });
+            // 지문이 여러 조각(PassageImage[])으로 쪼개져 저장된 경우 모두 순서대로 박음.
+            // 각 조각은 별개 블록이라 column flow 따라 좌단 → 우단으로 자연스럽게 이어짐.
+            const passageImages: string[] = it.passage.images && it.passage.images.length > 0
+                ? it.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
+                : (it.passage.imageUrl ? [it.passage.imageUrl] : []);
+            for (const imgUrl of passageImages) {
+                blocks.push({ type: 'passage', imageUrl: imgUrl, spanFull: false });
             }
             // 지문에 속한 문제들
             const questions = it.passage.questions || [];
