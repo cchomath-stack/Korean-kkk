@@ -24,10 +24,29 @@ export type ExamHydrated = {
 };
 
 // 한 항목(지문 세트 또는 단독 문제)을 평탄화해서 PDF 블록 단위로 변환
+type ImgOpts = {
+    scale: number;
+    align: 'left' | 'center' | 'right';
+    cropTop: number;
+    cropBottom: number;
+    cropLeft: number;
+    cropRight: number;
+};
 type FlatBlock =
     | { type: 'section'; label: string; subTitle: string | null }
-    | { type: 'passage'; imageUrl: string; spanFull: boolean }
-    | { type: 'question'; imageUrl: string; displayNo: number; originalNo: number | null; long: boolean };
+    | { type: 'passage'; imageUrl: string; spanFull: boolean; opts: ImgOpts }
+    | { type: 'question'; imageUrl: string; displayNo: number; originalNo: number | null; long: boolean; opts: ImgOpts };
+
+function itemOpts(it: any): ImgOpts {
+    return {
+        scale: typeof it.imageScale === 'number' ? it.imageScale : 1.0,
+        align: (it.imageAlign === 'left' || it.imageAlign === 'right') ? it.imageAlign : 'center',
+        cropTop: typeof it.cropTop === 'number' ? it.cropTop : 0,
+        cropBottom: typeof it.cropBottom === 'number' ? it.cropBottom : 0,
+        cropLeft: typeof it.cropLeft === 'number' ? it.cropLeft : 0,
+        cropRight: typeof it.cropRight === 'number' ? it.cropRight : 0,
+    };
+}
 
 export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean }): FlatBlock[] {
     const blocks: FlatBlock[] = [];
@@ -35,7 +54,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
     let lastLabel: string | null = null;
 
     for (const it of exam.items) {
-        // 섹션 라벨이 바뀌면 라벨 블록 추가
+        const o = itemOpts(it);
         const labelText = it.sectionLabel?.trim() || null;
         if (labelText && labelText !== lastLabel) {
             blocks.push({ type: 'section', label: labelText, subTitle: passageSubTitle(it.passage) });
@@ -43,15 +62,12 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
         }
 
         if (it.kind === 'passage' && it.passage) {
-            // 지문이 여러 조각(PassageImage[])으로 쪼개져 저장된 경우 모두 순서대로 박음.
-            // 각 조각은 별개 블록이라 column flow 따라 좌단 → 우단으로 자연스럽게 이어짐.
             const passageImages: string[] = it.passage.images && it.passage.images.length > 0
                 ? it.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
                 : (it.passage.imageUrl ? [it.passage.imageUrl] : []);
             for (const imgUrl of passageImages) {
-                blocks.push({ type: 'passage', imageUrl: imgUrl, spanFull: false });
+                blocks.push({ type: 'passage', imageUrl: imgUrl, spanFull: false, opts: o });
             }
-            // 지문에 속한 문제들
             const questions = it.passage.questions || [];
             for (const q of questions) {
                 blocks.push({
@@ -60,6 +76,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
                     displayNo: displayNo++,
                     originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
                     long: false,
+                    opts: o,
                 });
             }
         } else if (it.kind === 'question' && it.question) {
@@ -70,6 +87,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
                 displayNo: displayNo++,
                 originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
                 long: false,
+                opts: o,
             });
         }
     }
@@ -169,6 +187,50 @@ export function ExamPaper({ exam, showOriginalNo = true }: ExamPaperProps) {
     );
 }
 
+function alignToFlex(a: 'left' | 'center' | 'right'): string {
+    return a === 'left' ? 'flex-start' : a === 'right' ? 'flex-end' : 'center';
+}
+
+function ImgWithOpts({ src, alt, opts }: { src: string; alt: string; opts: ImgOpts }) {
+    const visW = Math.max(0.1, 1 - opts.cropLeft - opts.cropRight);
+    const visH = Math.max(0.1, 1 - opts.cropTop - opts.cropBottom);
+    const widthPct = Math.round(opts.scale * 100);
+    const noCrop = opts.cropTop === 0 && opts.cropBottom === 0 && opts.cropLeft === 0 && opts.cropRight === 0;
+
+    if (noCrop) {
+        return (
+            <div style={{ display: 'flex', justifyContent: alignToFlex(opts.align), width: '100%' }}>
+                <img src={src} alt={alt} style={{ width: `${widthPct}%`, height: 'auto', display: 'block' }} />
+            </div>
+        );
+    }
+
+    // 자르기 적용: wrapper에 overflow:hidden + 내부 이미지를 크게 잡고 음수 위치로 이동
+    return (
+        <div style={{ display: 'flex', justifyContent: alignToFlex(opts.align), width: '100%' }}>
+            <div style={{
+                width: `${widthPct}%`,
+                overflow: 'hidden',
+                position: 'relative',
+                aspectRatio: `${visW} / ${visH}`,
+            }}>
+                <img
+                    src={src}
+                    alt={alt}
+                    style={{
+                        position: 'absolute',
+                        width: `${100 / visW}%`,
+                        left: `${-(opts.cropLeft / visW) * 100}%`,
+                        top: `${-(opts.cropTop / visH) * 100}%`,
+                        height: 'auto',
+                        display: 'block',
+                    }}
+                />
+            </div>
+        </div>
+    );
+}
+
 function ExamBlock({ block }: { block: FlatBlock }) {
     if (block.type === 'section') {
         return (
@@ -184,7 +246,7 @@ function ExamBlock({ block }: { block: FlatBlock }) {
         return (
             <div className={`exam-block exam-block-passage ${block.spanFull ? 'span-full' : ''}`}>
                 <div className="exam-passage-box">
-                    <img src={block.imageUrl} alt="passage" />
+                    <ImgWithOpts src={block.imageUrl} alt="passage" opts={block.opts} />
                 </div>
             </div>
         );
@@ -198,7 +260,7 @@ function ExamBlock({ block }: { block: FlatBlock }) {
                     <span className="exam-question-original-no">[원본 {block.originalNo}번]</span>
                 )}
             </div>
-            <img src={block.imageUrl} alt={`q-${block.displayNo}`} />
+            <ImgWithOpts src={block.imageUrl} alt={`q-${block.displayNo}`} opts={block.opts} />
         </div>
     );
 }

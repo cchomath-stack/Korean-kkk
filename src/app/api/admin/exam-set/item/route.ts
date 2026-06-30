@@ -116,16 +116,31 @@ export async function PUT(request: NextRequest) {
             return NextResponse.json({ error: '시험지를 찾을 수 없습니다.' }, { status: 404 });
         }
 
+        const clamp = (v: any, min: number, max: number, fallback: number) => {
+            const n = typeof v === 'number' ? v : parseFloat(String(v));
+            if (!isFinite(n)) return fallback;
+            return Math.max(min, Math.min(max, n));
+        };
+
         await prisma.$transaction(
-            items.map((it: any) =>
-                prisma.examItem.update({
+            items.map((it: any) => {
+                const data: any = {
+                    order: parseInt(String(it.order), 10),
+                };
+                if (it.sectionLabel !== undefined) data.sectionLabel = it.sectionLabel || null;
+                if (it.imageScale !== undefined) data.imageScale = clamp(it.imageScale, 0.3, 2.0, 1.0);
+                if (it.imageAlign !== undefined && ['left', 'center', 'right'].includes(it.imageAlign)) {
+                    data.imageAlign = it.imageAlign;
+                }
+                if (it.cropTop !== undefined) data.cropTop = clamp(it.cropTop, 0, 0.45, 0);
+                if (it.cropBottom !== undefined) data.cropBottom = clamp(it.cropBottom, 0, 0.45, 0);
+                if (it.cropLeft !== undefined) data.cropLeft = clamp(it.cropLeft, 0, 0.45, 0);
+                if (it.cropRight !== undefined) data.cropRight = clamp(it.cropRight, 0, 0.45, 0);
+                return prisma.examItem.update({
                     where: { id: parseInt(String(it.id), 10) },
-                    data: {
-                        order: parseInt(String(it.order), 10),
-                        ...(it.sectionLabel !== undefined && { sectionLabel: it.sectionLabel || null }),
-                    },
-                })
-            )
+                    data,
+                });
+            })
         );
 
         const updated = await prisma.examItem.findMany({
