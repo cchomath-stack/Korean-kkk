@@ -254,7 +254,7 @@ export default function ExamBuilderPage() {
                             </p>
                         )}
                     </div>
-                    <SearchPanel onAdded={fetchExam} />
+                    <SearchPanel examSetId={exam.id} onAdded={fetchExam} />
 
                     <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
                         <p className="text-xs font-bold text-amber-900 leading-relaxed">
@@ -478,11 +478,14 @@ function QuestionPreview({ question }: { question: any }) {
 }
 
 // === 사이드 검색 패널 — exam-builder 안에서 직접 검색하고 담을 수 있게 ===
-function SearchPanel({ onAdded }: { onAdded: () => void }) {
+function SearchPanel({ examSetId, onAdded }: { examSetId: number; onAdded: () => void }) {
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [results, setResults] = useState<{ passages: any[]; questions: any[] } | null>(null);
     const [loading, setLoading] = useState(false);
+    const [busyId, setBusyId] = useState<string | null>(null);
+    const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set());
+    const [choice, setChoice] = useState<{ passageId: number; questionId: number } | null>(null);
 
     useEffect(() => {
         const t = setTimeout(() => setDebouncedQuery(query), 400);
@@ -490,10 +493,7 @@ function SearchPanel({ onAdded }: { onAdded: () => void }) {
     }, [query]);
 
     useEffect(() => {
-        if (!debouncedQuery.trim()) {
-            setResults(null);
-            return;
-        }
+        if (!debouncedQuery.trim()) { setResults(null); return; }
         let cancelled = false;
         (async () => {
             setLoading(true);
@@ -506,6 +506,27 @@ function SearchPanel({ onAdded }: { onAdded: () => void }) {
         })();
         return () => { cancelled = true; };
     }, [debouncedQuery]);
+
+    const addItem = async (kind: 'passage' | 'question', passageId?: number, questionId?: number) => {
+        const key = `${kind}-${passageId ?? questionId}`;
+        setBusyId(key);
+        try {
+            const res = await fetch('/api/admin/exam-set/item', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ examSetId, kind, passageId, questionId }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(`담기 실패: ${err.error || err.detail || res.statusText}`);
+                return;
+            }
+            setAddedKeys(prev => new Set(prev).add(key));
+            onAdded();
+        } finally {
+            setBusyId(null);
+        }
+    };
 
     const totalResults = (results?.passages.length || 0) + (results?.questions.length || 0);
 
@@ -522,14 +543,11 @@ function SearchPanel({ onAdded }: { onAdded: () => void }) {
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         placeholder="본문, #해시태그, 영역..."
-                        className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-200 rounded-xl bg-white focus:border-teal-400 focus:ring-2 focus:ring-teal-100 outline-none"
+                        className="w-full pl-9 pr-9 py-2.5 text-sm border border-slate-200 rounded-xl bg-white focus:border-teal-400 focus:ring-2 focus:ring-teal-100 outline-none"
                     />
                     <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
                     {query && (
-                        <button
-                            onClick={() => { setQuery(''); setResults(null); }}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-300 hover:text-slate-600"
-                        >
+                        <button onClick={() => { setQuery(''); setResults(null); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-300 hover:text-slate-600">
                             <X className="w-4 h-4" />
                         </button>
                     )}
@@ -541,12 +559,8 @@ function SearchPanel({ onAdded }: { onAdded: () => void }) {
                 )}
             </div>
 
-            <div className="max-h-[480px] overflow-y-auto">
-                {loading && (
-                    <div className="flex justify-center py-8">
-                        <Loader2 className="w-5 h-5 animate-spin text-teal-500" />
-                    </div>
-                )}
+            <div className="max-h-[520px] overflow-y-auto">
+                {loading && <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-teal-500" /></div>}
                 {!loading && !results && (
                     <div className="px-4 py-8 text-center">
                         <Search className="w-8 h-8 text-slate-200 mx-auto mb-2" />
@@ -554,39 +568,99 @@ function SearchPanel({ onAdded }: { onAdded: () => void }) {
                     </div>
                 )}
                 {!loading && results && totalResults === 0 && (
-                    <div className="px-4 py-8 text-center">
-                        <p className="text-xs text-slate-400 font-bold">검색 결과 없음</p>
-                    </div>
+                    <div className="px-4 py-8 text-center"><p className="text-xs text-slate-400 font-bold">검색 결과 없음</p></div>
                 )}
-                {!loading && results && results.passages.map((p: any) => (
-                    <div key={`p-${p.id}`} className="px-4 py-3 border-b border-slate-50 hover:bg-slate-50 flex items-start gap-2">
-                        <FileText className="w-4 h-4 text-teal-500 flex-shrink-0 mt-0.5" />
-                        <div className="flex-grow min-w-0">
-                            <p className="text-[11px] font-black text-slate-700 truncate">
-                                지문 · {p.year}.{p.month} {p.grade}학년 {p.questionRange ? `${p.questionRange}번` : ''}
-                            </p>
-                            <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">{p.ocrText?.slice(0, 80) || ''}</p>
+                {!loading && results && results.passages.map((p: any) => {
+                    const key = `passage-${p.id}`;
+                    const added = addedKeys.has(key);
+                    const busy = busyId === key;
+                    return (
+                        <div key={key} className="px-3 py-3 border-b border-slate-50 hover:bg-slate-50">
+                            <div className="flex items-start gap-2 mb-2">
+                                <FileText className="w-4 h-4 text-teal-500 flex-shrink-0 mt-0.5" />
+                                <div className="flex-grow min-w-0">
+                                    <p className="text-[11px] font-black text-slate-700 truncate">
+                                        📄 지문 · {p.year}.{p.month} {p.grade}학년 {p.questionRange ? `${p.questionRange}번` : ''}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">{p.ocrText?.slice(0, 80) || ''}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => addItem('passage', p.id)}
+                                disabled={busy || added}
+                                className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition ${added ? 'bg-emerald-50 text-emerald-700' : busy ? 'bg-slate-200 text-slate-500' : 'bg-teal-600 hover:bg-teal-700 text-white'}`}
+                            >
+                                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : added ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                {added ? '담김' : '지문 세트로 담기'}
+                            </button>
                         </div>
-                        <div onClick={(e) => e.stopPropagation()}>
-                            <AddToCartButton kind="passage" passageId={p.id} compact />
+                    );
+                })}
+                {!loading && results && results.questions.map((q: any) => {
+                    const qKey = `question-${q.id}`;
+                    const pKey = q.passageId ? `passage-${q.passageId}` : null;
+                    const added = addedKeys.has(qKey) || (!!pKey && addedKeys.has(pKey));
+                    const busy = busyId === qKey || (!!pKey && busyId === pKey);
+                    return (
+                        <div key={qKey} className="px-3 py-3 border-b border-slate-50 hover:bg-slate-50">
+                            <div className="flex items-start gap-2 mb-2">
+                                <img src={q.imageUrl} alt="" className="w-12 h-12 object-cover rounded border border-slate-100 flex-shrink-0" />
+                                <div className="flex-grow min-w-0">
+                                    <p className="text-[11px] font-black text-slate-700 truncate">
+                                        📝 {q.questionNo ? `${q.questionNo}번` : '문제'} · {q.passage?.year ?? q.year ?? ''}.{q.passage?.month ?? q.month ?? ''} {q.passage?.grade ?? q.grade ?? ''}학년
+                                    </p>
+                                    <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">{q.ocrText?.slice(0, 80) || ''}</p>
+                                </div>
+                            </div>
+                            {q.passageId ? (
+                                <button
+                                    onClick={() => setChoice({ passageId: q.passageId, questionId: q.id })}
+                                    disabled={!!busy || !!added}
+                                    className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition ${added ? 'bg-emerald-50 text-emerald-700' : busy ? 'bg-slate-200 text-slate-500' : 'bg-teal-600 hover:bg-teal-700 text-white'}`}
+                                >
+                                    {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : added ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                    {added ? '담김' : '담기 (지문 있음)'}
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={() => addItem('question', undefined, q.id)}
+                                    disabled={busy || added}
+                                    className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition ${added ? 'bg-emerald-50 text-emerald-700' : busy ? 'bg-slate-200 text-slate-500' : 'bg-teal-600 hover:bg-teal-700 text-white'}`}
+                                >
+                                    {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : added ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                    {added ? '담김' : '단독 문제로 담기'}
+                                </button>
+                            )}
                         </div>
-                    </div>
-                ))}
-                {!loading && results && results.questions.map((q: any) => (
-                    <div key={`q-${q.id}`} className="px-4 py-3 border-b border-slate-50 hover:bg-slate-50 flex items-start gap-2">
-                        <img src={q.imageUrl} alt="" className="w-12 h-12 object-cover rounded border border-slate-100 flex-shrink-0" />
-                        <div className="flex-grow min-w-0">
-                            <p className="text-[11px] font-black text-slate-700 truncate">
-                                {q.questionNo ? `${q.questionNo}번` : '문제'} · {q.passage?.year ?? q.year ?? ''}.{q.passage?.month ?? q.month ?? ''} {q.passage?.grade ?? q.grade ?? ''}학년
-                            </p>
-                            <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">{q.ocrText?.slice(0, 80) || ''}</p>
-                        </div>
-                        <div onClick={(e) => e.stopPropagation()}>
-                            <AddToCartButton kind="question" questionId={q.id} passageId={q.passageId ?? undefined} hasPassageQuestions={!!q.passageId} compact />
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
+
+            {choice && (
+                <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setChoice(null)}>
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-xl font-black text-slate-900 mb-2">담기 방식 선택</h3>
+                        <p className="text-sm text-slate-500 font-medium mb-6">이 문제는 지문이 있는 문항입니다. 어떻게 담을까요?</p>
+                        <div className="grid grid-cols-1 gap-3">
+                            <button
+                                onClick={async () => { const { passageId } = choice; setChoice(null); await addItem('passage', passageId); }}
+                                className="w-full text-left px-5 py-4 rounded-2xl border-2 border-teal-200 bg-teal-50 hover:bg-teal-100"
+                            >
+                                <div className="font-black text-teal-800 mb-1">📄 지문 세트로 담기</div>
+                                <div className="text-xs text-teal-700 font-medium">지문 + 그 지문에 속한 모든 문제 (권장)</div>
+                            </button>
+                            <button
+                                onClick={async () => { const { questionId } = choice; setChoice(null); await addItem('question', undefined, questionId); }}
+                                className="w-full text-left px-5 py-4 rounded-2xl border-2 border-slate-200 bg-slate-50 hover:bg-slate-100"
+                            >
+                                <div className="font-black text-slate-800 mb-1">📝 이 문제만 담기</div>
+                                <div className="text-xs text-slate-600 font-medium">지문 없이 문제만 담음</div>
+                            </button>
+                        </div>
+                        <button onClick={() => setChoice(null)} className="w-full mt-4 px-4 py-2 text-sm text-slate-500 hover:text-slate-700 font-bold">취소</button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
