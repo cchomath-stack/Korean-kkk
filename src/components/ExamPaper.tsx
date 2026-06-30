@@ -45,7 +45,8 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
         if (it.kind === 'passage' && it.passage) {
             const passageImg = it.passage.imageUrl || it.passage.images?.[0]?.imageUrl;
             if (passageImg) {
-                blocks.push({ type: 'passage', imageUrl: passageImg, spanFull: true });
+                // 지문도 기본은 한 단 안에 들어감. break-inside: avoid가 자동 처리.
+                blocks.push({ type: 'passage', imageUrl: passageImg, spanFull: false });
             }
             // 지문에 속한 문제들
             const questions = it.passage.questions || [];
@@ -55,7 +56,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
                     imageUrl: q.imageUrl,
                     displayNo: displayNo++,
                     originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
-                    long: estimateLong(q),
+                    long: false,
                 });
             }
         } else if (it.kind === 'question' && it.question) {
@@ -65,7 +66,7 @@ export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean 
                 imageUrl: q.imageUrl,
                 displayNo: displayNo++,
                 originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
-                long: estimateLong(q),
+                long: false,
             });
         }
     }
@@ -328,8 +329,9 @@ const EXAM_PAPER_CSS = `
 /* 본문 (2단) */
 .exam-body {
     column-count: 2;
-    column-gap: 7mm;
-    column-rule: 1px solid #94a3b8;
+    column-gap: 8mm;
+    column-rule: 1px solid #1f2937;
+    column-fill: auto;
     flex-grow: 1;
     font-size: 10.5pt;
     line-height: 1.55;
@@ -337,11 +339,13 @@ const EXAM_PAPER_CSS = `
 
 .exam-block {
     break-inside: avoid;
+    page-break-inside: avoid;
+    -webkit-column-break-inside: avoid;
     margin-bottom: 5mm;
 }
 
-.exam-block-section,
-.exam-block-passage.span-full {
+/* 섹션 라벨(보라 태그)만 양 단 가로지름. 지문/문제는 모두 한 단 안에 통째로. */
+.exam-block-section {
     column-span: all;
 }
 
@@ -358,9 +362,8 @@ const EXAM_PAPER_CSS = `
 
 .exam-block-question {
     break-inside: avoid;
-}
-.exam-block-question.long {
-    column-span: all;
+    page-break-inside: avoid;
+    -webkit-column-break-inside: avoid;
 }
 .exam-question-no-row {
     display: flex;
