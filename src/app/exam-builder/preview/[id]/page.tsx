@@ -294,7 +294,7 @@ export default function ExamPreviewPage() {
             </header>
 
             <div className="bg-teal-50 border-b border-teal-100 px-6 py-2 text-center text-xs font-bold text-teal-800">
-                💡 파란 조절점 드래그 = <b>이미지 크기 조절</b> · <b>Shift 누른 채 이미지 위에서 드래그 = 그린 영역만 남기기</b> (선택된 사각형이 새 이미지가 되고 원본은 이 시험지에서 대체됨) · <b>Ctrl+Z</b> = 취소
+                💡 파란 조절점 드래그 = <b>이미지 크기 조절</b> · <b>Shift+드래그 = 그린 영역만 남기기</b> · <b>Ctrl+Z</b> = 취소 · 이미지 hover 시 좌측 상단 <b className="text-rose-600">[↺ 원본으로]</b> 버튼으로 잘못된 편집 되돌리기
             </div>
 
             <ExamPaper

@@ -124,18 +124,20 @@ export async function PUT(request: NextRequest) {
 
         await prisma.$transaction(
             items.map((it: any) => {
-                const data: any = {
-                    order: parseInt(String(it.order), 10),
-                };
+                const data: any = {};
+                if (it.order !== undefined) {
+                    const n = parseInt(String(it.order), 10);
+                    if (!isNaN(n)) data.order = n;
+                }
                 if (it.sectionLabel !== undefined) data.sectionLabel = it.sectionLabel || null;
-                if (it.imageScale !== undefined) data.imageScale = clamp(it.imageScale, 0.3, 2.0, 1.0);
+                if (it.imageScale !== undefined) data.imageScale = clamp(it.imageScale, 0.05, 4.0, 1.0);
                 if (it.imageAlign !== undefined && ['left', 'center', 'right'].includes(it.imageAlign)) {
                     data.imageAlign = it.imageAlign;
                 }
-                if (it.cropTop !== undefined) data.cropTop = clamp(it.cropTop, 0, 0.45, 0);
-                if (it.cropBottom !== undefined) data.cropBottom = clamp(it.cropBottom, 0, 0.45, 0);
-                if (it.cropLeft !== undefined) data.cropLeft = clamp(it.cropLeft, 0, 0.45, 0);
-                if (it.cropRight !== undefined) data.cropRight = clamp(it.cropRight, 0, 0.45, 0);
+                if (it.cropTop !== undefined) data.cropTop = clamp(it.cropTop, 0, 0.99, 0);
+                if (it.cropBottom !== undefined) data.cropBottom = clamp(it.cropBottom, 0, 0.99, 0);
+                if (it.cropLeft !== undefined) data.cropLeft = clamp(it.cropLeft, 0, 0.99, 0);
+                if (it.cropRight !== undefined) data.cropRight = clamp(it.cropRight, 0, 0.99, 0);
                 return prisma.examItem.update({
                     where: { id: parseInt(String(it.id), 10) },
                     data,

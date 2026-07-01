@@ -312,6 +312,35 @@ function SlotRender({
     };
 
     const [cropping, setCropping] = React.useState(false);
+    const [resetting, setResetting] = React.useState(false);
+
+    const resetToOriginal = async () => {
+        if (!examSetId) return;
+        if (!confirm('이 이미지를 원본으로 되돌리고 크기·자르기를 초기화할까요?')) return;
+        setResetting(true);
+        try {
+            // 1) croppedImageUrl 제거 (원본 이미지 URL로 복귀)
+            await fetch(`/api/admin/exam-set/item/crop-image?itemId=${slot.itemId}`, { method: 'DELETE' });
+            // 2) imageScale, crop 값 리셋 (order는 안 건드림)
+            await fetch('/api/admin/exam-set/item', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    examSetId,
+                    items: [{
+                        id: slot.itemId,
+                        imageScale: 1.0,
+                        imageAlign: 'left',
+                        cropTop: 0, cropBottom: 0, cropLeft: 0, cropRight: 0,
+                    }],
+                }),
+            });
+            onInlineCommit?.(slot.itemId);
+        } finally {
+            setResetting(false);
+        }
+    };
+
     const doCropAndReplace = async (
         srcUrl: string, itemId: number,
         u1: number, v1: number, u2: number, v2: number,
@@ -535,6 +564,17 @@ function SlotRender({
                     title="이미지 조정"
                 >
                     ✏️ 이미지 조정
+                </button>
+            )}
+            {editable && (
+                <button
+                    type="button"
+                    className="exam-reset-btn"
+                    onClick={(e) => { e.stopPropagation(); resetToOriginal(); }}
+                    disabled={resetting}
+                    title="원본으로 복구 (크기·자르기 초기화)"
+                >
+                    {resetting ? '복구 중...' : '↺ 원본으로'}
                 </button>
             )}
         </div>
@@ -1000,6 +1040,30 @@ const EXAM_PAPER_CSS = `
 }
 .exam-slot-inner:hover .exam-adjust-btn { opacity: 1; }
 .exam-adjust-btn:hover { background: rgba(15,118,110,1); }
+
+/* 원본 복구 버튼 (편집 모드에서만) */
+.exam-reset-btn {
+    position: absolute;
+    top: 2mm;
+    left: 2mm;
+    z-index: 25;
+    background: rgba(220, 38, 38, 0.95);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 9pt;
+    font-weight: 800;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    font-family: 'Nanum Gothic', 'Pretendard', sans-serif;
+}
+.exam-slot-inner.editable:hover .exam-reset-btn { opacity: 1; }
+.exam-reset-btn:hover:not(:disabled) { background: rgba(185, 28, 28, 1); }
+.exam-reset-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+@media print { .exam-reset-btn { display: none !important; } }
 
 @media screen {
     .exam-paper-root {
