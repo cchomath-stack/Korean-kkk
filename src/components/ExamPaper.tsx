@@ -301,64 +301,70 @@ function SlotRender({
         onInlineCommit?.(slot.itemId);
     };
 
+    // 이미지 크기 = slot 폭 대비 imageScale × 100 %. 좌상단부터 배치가 기본.
+    const widthPct = Math.round(slot.opts.scale * 100);
+    const visW = Math.max(0.1, 1 - slot.opts.cropLeft - slot.opts.cropRight);
+    const visH = Math.max(0.1, 1 - slot.opts.cropTop - slot.opts.cropBottom);
+    const noCrop = slot.opts.cropTop === 0 && slot.opts.cropBottom === 0
+        && slot.opts.cropLeft === 0 && slot.opts.cropRight === 0;
+    const alignItems = slot.opts.align === 'right' ? 'flex-end'
+        : slot.opts.align === 'center' ? 'center'
+        : 'flex-start';
+
+    const isPassage = slot.type === 'passage';
+
+    const wrapStyle: React.CSSProperties = {
+        width: `${widthPct}%`,
+        position: 'relative',
+        ...(noCrop ? {} : { aspectRatio: `${visW} / ${visH}`, overflow: 'hidden' }),
+    };
+    const imgStyle: React.CSSProperties = noCrop
+        ? { width: '100%', height: 'auto', display: 'block' }
+        : {
+            position: 'absolute',
+            width: `${100 / visW}%`,
+            left: `${-(slot.opts.cropLeft / visW) * 100}%`,
+            top: `${-(slot.opts.cropTop / visH) * 100}%`,
+            height: 'auto',
+            display: 'block',
+        };
+
     return (
-        <div className={`exam-slot-inner ${editable ? 'editable' : ''}`}>
+        <div className={`exam-slot-inner ${editable ? 'editable' : ''}`} style={{ alignItems }}>
             {slot.sectionLabel && (
-                <div className="exam-section-row">
+                <div className="exam-section-row" style={{ alignSelf: 'stretch' }}>
                     <span className="exam-section-tag">{slot.sectionLabel}</span>
                 </div>
             )}
-            {slot.type === 'passage' ? (
-                <div
-                    ref={imgWrapRef}
-                    className="exam-passage-box exam-editable-img"
-                    onMouseDown={editable ? onImgMouseDown : undefined}
-                    onWheel={editable ? onImgWheel : undefined}
-                >
-                    <ImgWithOpts src={slot.imageUrl} alt="passage" opts={slot.opts} />
-                    {editable && <EditHandles onMouseDown={onHandleMouseDown} />}
-                    {dragMode === 'crop' && cropRect && (
-                        <div
-                            className="exam-crop-rect"
-                            style={{
-                                left: Math.min(cropRect.x1, cropRect.x2),
-                                top: Math.min(cropRect.y1, cropRect.y2),
-                                width: Math.abs(cropRect.x2 - cropRect.x1),
-                                height: Math.abs(cropRect.y2 - cropRect.y1),
-                            }}
-                        />
+            {!isPassage && (
+                <div className="exam-question-no-row" style={{ alignSelf: 'stretch' }}>
+                    <span className="exam-question-no">{slot.displayNo}.</span>
+                    {slot.originalNo != null && (
+                        <span className="exam-question-original-no">[원본 {slot.originalNo}번]</span>
                     )}
                 </div>
-            ) : (
-                <>
-                    <div className="exam-question-no-row">
-                        <span className="exam-question-no">{slot.displayNo}.</span>
-                        {slot.originalNo != null && (
-                            <span className="exam-question-original-no">[원본 {slot.originalNo}번]</span>
-                        )}
-                    </div>
-                    <div
-                        ref={imgWrapRef}
-                        className="exam-question-body exam-editable-img"
-                        onMouseDown={editable ? onImgMouseDown : undefined}
-                        onWheel={editable ? onImgWheel : undefined}
-                    >
-                        <ImgWithOpts src={slot.imageUrl} alt={`q-${slot.displayNo}`} opts={slot.opts} />
-                        {editable && <EditHandles onMouseDown={onHandleMouseDown} />}
-                        {dragMode === 'crop' && cropRect && (
-                            <div
-                                className="exam-crop-rect"
-                                style={{
-                                    left: Math.min(cropRect.x1, cropRect.x2),
-                                    top: Math.min(cropRect.y1, cropRect.y2),
-                                    width: Math.abs(cropRect.x2 - cropRect.x1),
-                                    height: Math.abs(cropRect.y2 - cropRect.y1),
-                                }}
-                            />
-                        )}
-                    </div>
-                </>
             )}
+            <div
+                ref={imgWrapRef}
+                className={`exam-image-wrap ${isPassage ? 'passage' : 'question'} ${editable ? 'exam-editable-img' : ''}`}
+                style={wrapStyle}
+                onMouseDown={editable ? onImgMouseDown : undefined}
+                onWheel={editable ? onImgWheel : undefined}
+            >
+                <img src={slot.imageUrl} alt={isPassage ? 'passage' : `q-${slot.displayNo}`} style={imgStyle} />
+                {editable && <EditHandles onMouseDown={onHandleMouseDown} />}
+                {dragMode === 'crop' && cropRect && (
+                    <div
+                        className="exam-crop-rect"
+                        style={{
+                            left: Math.min(cropRect.x1, cropRect.x2),
+                            top: Math.min(cropRect.y1, cropRect.y2),
+                            width: Math.abs(cropRect.x2 - cropRect.x1),
+                            height: Math.abs(cropRect.y2 - cropRect.y1),
+                        }}
+                    />
+                )}
+            </div>
             {onAdjustItem && !editable && (
                 <button
                     type="button"
@@ -556,6 +562,23 @@ const EXAM_PAPER_CSS = `
     height: 100%;
     display: flex;
     flex-direction: column;
+    align-items: flex-start; /* 좌상단 기본 */
+    justify-content: flex-start;
+    gap: 3mm;
+}
+
+.exam-image-wrap {
+    display: block;
+    max-width: 100%;
+}
+.exam-image-wrap.passage {
+    border: 1.2px solid #1f2937;
+    padding: 2mm;
+    background: white;
+    box-sizing: border-box;
+}
+.exam-image-wrap.question {
+    /* 문제는 border 없음 (원본 이미지에 이미 박스가 포함된 경우가 대부분) */
 }
 
 .exam-section-row {
@@ -575,20 +598,10 @@ const EXAM_PAPER_CSS = `
     letter-spacing: 0.4px;
 }
 
-.exam-passage-box {
-    border: 1.2px solid #1f2937;
-    padding: 4mm;
-    background: white;
-    max-height: 100%;
-    overflow: hidden;
-}
-.exam-passage-box img { width: 100%; display: block; }
-
 .exam-question-no-row {
     display: flex;
     align-items: baseline;
     gap: 3mm;
-    margin-bottom: 2mm;
 }
 .exam-question-no {
     font-family: 'Nanum Gothic', sans-serif;
@@ -601,10 +614,6 @@ const EXAM_PAPER_CSS = `
     font-size: 8pt;
     color: #94a3b8;
     font-weight: 500;
-}
-.exam-question-body {
-    flex: 1 1 auto;
-    overflow: hidden;
 }
 
 /* 정답표 페이지 */
