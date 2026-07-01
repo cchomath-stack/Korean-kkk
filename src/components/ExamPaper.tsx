@@ -212,6 +212,19 @@ function SlotRender({
     const imgWrapRef = React.useRef<HTMLDivElement>(null);
     const [dragMode, setDragMode] = React.useState<null | 'scale' | 'crop'>(null);
     const [cropRect, setCropRect] = React.useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+    const [shiftHeld, setShiftHeld] = React.useState(false);
+
+    React.useEffect(() => {
+        if (!editable) return;
+        const onDown = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(true); };
+        const onUp = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false); };
+        window.addEventListener('keydown', onDown);
+        window.addEventListener('keyup', onUp);
+        return () => {
+            window.removeEventListener('keydown', onDown);
+            window.removeEventListener('keyup', onUp);
+        };
+    }, [editable]);
 
     const onImgMouseDown = (e: React.MouseEvent) => {
         if (!editable) return;
@@ -260,25 +273,25 @@ function SlotRender({
         window.addEventListener('mouseup', up);
     };
 
-    // 코너 핸들 드래그: 이미지 중심 기준 마우스 거리 비율로 스케일 조절 (한글식 리사이즈)
+    // 좌상단 앵커 리사이즈: 이미지의 좌상단은 슬롯 좌상단에 고정. 마우스 x 위치가 새 폭 결정.
+    // 어떤 핸들을 잡든 동일 동작 (imageScale 하나만 조절).
     const onHandleMouseDown = (e: React.MouseEvent) => {
         if (!editable || !onInlineChange) return;
         e.preventDefault();
         e.stopPropagation();
         const wrap = imgWrapRef.current;
         if (!wrap) return;
-        const rect = wrap.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const startDist = Math.max(1, Math.hypot(e.clientX - cx, e.clientY - cy));
-        const startScale = slot.opts.scale;
+        const slotEl = wrap.parentElement; // 슬롯(단) 컨테이너
+        if (!slotEl) return;
+        const slotRect = slotEl.getBoundingClientRect();
+        const anchorX = wrap.getBoundingClientRect().left; // 이미지 좌상단 X
         setDragMode('scale');
 
         const move = (ev: MouseEvent) => {
-            const d = Math.hypot(ev.clientX - cx, ev.clientY - cy);
-            const factor = d / startDist;
-            const next = clamp(startScale * factor, 0.3, 2.0);
-            onInlineChange(slot.itemId, { scale: next });
+            // 마우스 x가 이미지의 새 우측 경계. 폭 = mouseX - 좌상단.
+            const newWidthPx = Math.max(20, ev.clientX - anchorX);
+            const nextScale = clamp(newWidthPx / slotRect.width, 0.3, 2.0);
+            onInlineChange(slot.itemId, { scale: nextScale });
         };
         const up = () => {
             window.removeEventListener('mousemove', move);
@@ -317,9 +330,10 @@ function SlotRender({
         width: `${widthPct}%`,
         position: 'relative',
         ...(noCrop ? {} : { aspectRatio: `${visW} / ${visH}`, overflow: 'hidden' }),
+        ...(editable ? { cursor: shiftHeld ? 'crosshair' : 'default' } : {}),
     };
     const imgStyle: React.CSSProperties = noCrop
-        ? { width: '100%', height: 'auto', display: 'block' }
+        ? { width: '100%', height: 'auto', display: 'block', pointerEvents: 'none', userSelect: 'none' }
         : {
             position: 'absolute',
             width: `${100 / visW}%`,
@@ -327,6 +341,8 @@ function SlotRender({
             top: `${-(slot.opts.cropTop / visH) * 100}%`,
             height: 'auto',
             display: 'block',
+            pointerEvents: 'none',
+            userSelect: 'none',
         };
 
     return (
@@ -351,7 +367,7 @@ function SlotRender({
                 onMouseDown={editable ? onImgMouseDown : undefined}
                 onWheel={editable ? onImgWheel : undefined}
             >
-                <img src={slot.imageUrl} alt={isPassage ? 'passage' : `q-${slot.displayNo}`} style={imgStyle} />
+                <img src={slot.imageUrl} alt={isPassage ? 'passage' : `q-${slot.displayNo}`} style={imgStyle} draggable={false} />
                 {editable && <EditHandles onMouseDown={onHandleMouseDown} />}
                 {dragMode === 'crop' && cropRect && (
                     <div
@@ -690,14 +706,15 @@ const EXAM_PAPER_CSS = `
 /* 8방향 핸들 (한글식 파란 사각점) */
 .exam-handle {
     position: absolute;
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     background: #2563eb;
     border: 1.5px solid white;
     box-shadow: 0 0 3px rgba(0,0,0,0.35);
     opacity: 0;
-    transition: opacity 0.15s, transform 0.1s;
+    transition: opacity 0.15s;
     z-index: 15;
+    pointer-events: auto;
 }
 .exam-slot-inner.editable .exam-editable-img:hover .exam-handle,
 .exam-slot-inner.editable .exam-editable-img:active .exam-handle {
