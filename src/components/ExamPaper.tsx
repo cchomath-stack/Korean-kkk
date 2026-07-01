@@ -1,6 +1,7 @@
 import React from 'react';
 
-// HWPX 시안에 맞춰 만든 시험지 본문 렌더러.
+// 시험지 본문 렌더러 — 슬롯 기반 페이지 자동 분할.
+// 1 항목 = 1 슬롯. 1 페이지 = 좌·우 2 슬롯. 항목 N개면 페이지 ceil(N/2)개 자동 생성.
 // 미리보기 페이지와 Puppeteer PDF 생성 시 동일하게 사용됨.
 
 export type ExamHydratedItem = {
@@ -8,6 +9,12 @@ export type ExamHydratedItem = {
     kind: 'passage' | 'question';
     sectionLabel: string | null;
     order: number;
+    imageScale?: number;
+    imageAlign?: string;
+    cropTop?: number;
+    cropBottom?: number;
+    cropLeft?: number;
+    cropRight?: number;
     passage: any | null;
     question: any | null;
 };
@@ -23,7 +30,6 @@ export type ExamHydrated = {
     items: ExamHydratedItem[];
 };
 
-// 한 항목(지문 세트 또는 단독 문제)을 평탄화해서 PDF 블록 단위로 변환
 type ImgOpts = {
     scale: number;
     align: 'left' | 'center' | 'right';
@@ -32,12 +38,12 @@ type ImgOpts = {
     cropLeft: number;
     cropRight: number;
 };
-type FlatBlock =
-    | { type: 'section'; label: string; subTitle: string | null; itemId?: number }
-    | { type: 'passage'; imageUrl: string; spanFull: boolean; opts: ImgOpts; itemId: number }
-    | { type: 'question'; imageUrl: string; displayNo: number; originalNo: number | null; long: boolean; opts: ImgOpts; itemId: number };
 
-function itemOpts(it: any): ImgOpts {
+type Slot =
+    | { type: 'passage'; itemId: number; imageUrl: string; opts: ImgOpts; sectionLabel: string | null }
+    | { type: 'question'; itemId: number; imageUrl: string; opts: ImgOpts; displayNo: number; originalNo: number | null; sectionLabel: string | null };
+
+function itemOpts(it: ExamHydratedItem): ImgOpts {
     return {
         scale: typeof it.imageScale === 'number' ? it.imageScale : 1.0,
         align: (it.imageAlign === 'left' || it.imageAlign === 'right') ? it.imageAlign : 'center',
@@ -48,141 +54,142 @@ function itemOpts(it: any): ImgOpts {
     };
 }
 
-export function flattenExam(exam: ExamHydrated, opts: { showOriginalNo: boolean }): FlatBlock[] {
-    const blocks: FlatBlock[] = [];
+// 항목들을 슬롯 배열로 평탄화. 지문 세트 = 지문 1슬롯 + 문제 각 1슬롯.
+function flattenSlots(exam: ExamHydrated, opts: { showOriginalNo: boolean }): Slot[] {
+    const slots: Slot[] = [];
     let displayNo = 1;
-    let lastLabel: string | null = null;
+    let currentLabel: string | null = null;
 
     for (const it of exam.items) {
         const o = itemOpts(it);
         const labelText = it.sectionLabel?.trim() || null;
-        if (labelText && labelText !== lastLabel) {
-            blocks.push({ type: 'section', label: labelText, subTitle: passageSubTitle(it.passage) });
-            lastLabel = labelText;
-        }
+        if (labelText) currentLabel = labelText;
 
         if (it.kind === 'passage' && it.passage) {
             const passageImages: string[] = it.passage.images && it.passage.images.length > 0
                 ? it.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
                 : (it.passage.imageUrl ? [it.passage.imageUrl] : []);
             for (const imgUrl of passageImages) {
-                blocks.push({ type: 'passage', imageUrl: imgUrl, spanFull: false, opts: o, itemId: it.id });
+                slots.push({
+                    type: 'passage',
+                    itemId: it.id,
+                    imageUrl: imgUrl,
+                    opts: o,
+                    sectionLabel: currentLabel,
+                });
+                currentLabel = null; // section 라벨은 첫 슬롯에만
             }
             const questions = it.passage.questions || [];
             for (const q of questions) {
-                blocks.push({
+                slots.push({
                     type: 'question',
+                    itemId: it.id,
                     imageUrl: q.imageUrl,
+                    opts: o,
                     displayNo: displayNo++,
                     originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
-                    long: false,
-                    opts: o,
-                    itemId: it.id,
+                    sectionLabel: currentLabel,
                 });
+                currentLabel = null;
             }
         } else if (it.kind === 'question' && it.question) {
             const q = it.question;
-            blocks.push({
+            slots.push({
                 type: 'question',
+                itemId: it.id,
                 imageUrl: q.imageUrl,
+                opts: o,
                 displayNo: displayNo++,
                 originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
-                long: false,
-                opts: o,
-                itemId: it.id,
+                sectionLabel: currentLabel,
             });
+            currentLabel = null;
         }
     }
-    return blocks;
-}
-
-function passageSubTitle(passage: any | null): string | null {
-    if (!passage) return null;
-    const parts = [
-        passage.year && `${passage.year}년`,
-        passage.month && `${passage.month}월`,
-        passage.grade && `고${passage.grade}`,
-        passage.source,
-        passage.area,
-    ].filter(Boolean);
-    return parts.length > 0 ? parts.join(' ') : null;
-}
-
-function estimateLong(q: any): boolean {
-    // boxH / boxW 기반으로 "긴 문제" 판단 (한 단 80% 이상 차지할 것으로 예상되면 long)
-    // 단 폭: A4 (210mm) - 좌우여백 20mm - 단 사이 8mm 가정 → 약 91mm 한 단
-    // 단 높이: A4 (297mm) - 상하여백 60mm = 약 237mm
-    // 이미지가 단폭에 맞게 스케일됐을 때 height/width 비율로 추정
-    if (q.boxH && q.boxW && q.boxW > 0) {
-        const ratio = q.boxH / q.boxW;
-        // 한 단 폭 91mm 기준, 이미지 세로 길이 = 91 * ratio (mm)
-        const estHeightMm = 91 * ratio;
-        return estHeightMm > 237 * 0.55; // 한 단의 55% 이상 → 긴 문제로 본다 (보수적으로)
-    }
-    return false;
+    return slots;
 }
 
 type ExamPaperProps = {
     exam: ExamHydrated;
     showOriginalNo?: boolean;
-    onAdjustItem?: (itemId: number) => void; // 화면 미리보기 전용 (PDF에선 omit)
+    onAdjustItem?: (itemId: number) => void;
 };
 
-// HTML/CSS로 시험지 렌더링.
-// Puppeteer에 그대로 전달해 PDF로 변환할 수 있도록 print 친화적인 CSS 사용.
 export function ExamPaper({ exam, showOriginalNo = true, onAdjustItem }: ExamPaperProps) {
-    const blocks = flattenExam(exam, { showOriginalNo });
+    const slots = flattenSlots(exam, { showOriginalNo });
+
+    // 슬롯을 2개씩 그룹핑 → 각 페이지
+    const pages: (Slot | null)[][] = [];
+    for (let i = 0; i < slots.length; i += 2) {
+        pages.push([slots[i], slots[i + 1] ?? null]);
+    }
+    if (pages.length === 0) pages.push([null, null]);
 
     return (
         <div className="exam-paper-root">
             <style>{EXAM_PAPER_CSS}</style>
 
-            <div className="exam-page">
-                {/* 최초 헤더 (큰 제목) */}
-                <header className="exam-header-large">
-                    <p className="exam-subtitle">{exam.subTitle || '소제목도 넣을 수 있어요'}</p>
-                    <h1 className="exam-title">{exam.title || '제목도 넣을 수 있어요'}</h1>
-                </header>
-
-                {/* 본문 (2단) */}
-                <main className="exam-body">
-                    {blocks.map((b, idx) => (
-                        <ExamBlock key={idx} block={b} onAdjustItem={onAdjustItem} />
-                    ))}
-                </main>
-
-                {/* 푸터 */}
-                <footer className="exam-footer">
-                    <p className="exam-copyright">
-                        본 자료의 무단 복제·배포·전송을 금지하며, 위반 시 민·형사상 책임이 발생할 수 있습니다.
-                    </p>
-                </footer>
-            </div>
-
-            {/* 정답표 (페이지 분할) */}
-            {hasAnswers(exam) && (
-                <div className="exam-page exam-page-answer">
-                    <header className="exam-header-small">
-                        <div className="exam-header-small-left">
-                            <span className="exam-section-tag">정답표</span>
-                            <span className="exam-section-subtitle">Answer Key</span>
+            {pages.map((pair, pIdx) => (
+                <div key={pIdx} className="exam-page">
+                    {/* 헤더 */}
+                    <header className="exam-header">
+                        <div className="exam-header-left">
+                            {exam.subTitle && <span className="exam-header-sub">{exam.subTitle}</span>}
                         </div>
-                        <div className="exam-header-small-right">
-                            {exam.academyName || ''}
+                        <h1 className="exam-header-title">{exam.title || '시험지'}</h1>
+                        <div className="exam-header-right">
+                            <span className="exam-page-no">{pIdx + 1}</span>
                         </div>
                     </header>
-                    <main className="exam-answer-grid">
-                        {collectAnswers(exam).map(a => (
-                            <div key={a.no} className="exam-answer-cell">
-                                <span className="exam-answer-no">{a.no}.</span>
-                                <span className="exam-answer-val">{a.answer || '-'}</span>
-                            </div>
-                        ))}
+
+                    {/* 본문 = 좌·우 두 슬롯 */}
+                    <main className="exam-body">
+                        <div className="exam-slot exam-slot-left">
+                            {pair[0] && <SlotRender slot={pair[0]} onAdjustItem={onAdjustItem} />}
+                        </div>
+                        <div className="exam-slot exam-slot-right">
+                            {pair[1] && <SlotRender slot={pair[1]} onAdjustItem={onAdjustItem} />}
+                        </div>
+                    </main>
+
+                    {/* 푸터 */}
+                    <footer className="exam-footer">
+                        <span className="exam-page-badge">
+                            <span className="pn">{pIdx + 1}</span>
+                            <span className="pt">/ {pages.length}</span>
+                        </span>
+                        <span className="exam-copyright">
+                            본 자료의 무단 복제·배포·전송을 금지하며, 위반 시 민·형사상 책임이 발생할 수 있습니다.
+                        </span>
+                    </footer>
+                </div>
+            ))}
+
+            {/* 정답표 (선택) */}
+            {hasAnswers(exam) && (
+                <div className="exam-page">
+                    <header className="exam-header">
+                        <div className="exam-header-left"><span className="exam-header-sub">정답표</span></div>
+                        <h1 className="exam-header-title">{exam.title || '시험지'}</h1>
+                        <div className="exam-header-right"><span className="exam-page-no">A</span></div>
+                    </header>
+                    <main className="exam-answer-body">
+                        <div className="exam-answer-grid">
+                            {collectAnswers(exam).map(a => (
+                                <div key={a.no} className="exam-answer-cell">
+                                    <span className="exam-answer-no">{a.no}.</span>
+                                    <span className="exam-answer-val">{a.answer || '-'}</span>
+                                </div>
+                            ))}
+                        </div>
                     </main>
                     <footer className="exam-footer">
-                        <p className="exam-copyright">
+                        <span className="exam-page-badge">
+                            <span className="pn">정답</span>
+                        </span>
+                        <span className="exam-copyright">
                             본 자료의 무단 복제·배포·전송을 금지하며, 위반 시 민·형사상 책임이 발생할 수 있습니다.
-                        </p>
+                        </span>
                     </footer>
                 </div>
             )}
@@ -190,8 +197,43 @@ export function ExamPaper({ exam, showOriginalNo = true, onAdjustItem }: ExamPap
     );
 }
 
-function alignToFlex(a: 'left' | 'center' | 'right'): string {
-    return a === 'left' ? 'flex-start' : a === 'right' ? 'flex-end' : 'center';
+function SlotRender({ slot, onAdjustItem }: { slot: Slot; onAdjustItem?: (itemId: number) => void }) {
+    return (
+        <div className="exam-slot-inner">
+            {slot.sectionLabel && (
+                <div className="exam-section-row">
+                    <span className="exam-section-tag">{slot.sectionLabel}</span>
+                </div>
+            )}
+            {slot.type === 'passage' ? (
+                <div className="exam-passage-box">
+                    <ImgWithOpts src={slot.imageUrl} alt="passage" opts={slot.opts} />
+                </div>
+            ) : (
+                <>
+                    <div className="exam-question-no-row">
+                        <span className="exam-question-no">{slot.displayNo}.</span>
+                        {slot.originalNo != null && (
+                            <span className="exam-question-original-no">[원본 {slot.originalNo}번]</span>
+                        )}
+                    </div>
+                    <div className="exam-question-body">
+                        <ImgWithOpts src={slot.imageUrl} alt={`q-${slot.displayNo}`} opts={slot.opts} />
+                    </div>
+                </>
+            )}
+            {onAdjustItem && (
+                <button
+                    type="button"
+                    className="exam-adjust-btn"
+                    onClick={(e) => { e.stopPropagation(); onAdjustItem(slot.itemId); }}
+                    title="이미지 조정"
+                >
+                    ✏️ 이미지 조정
+                </button>
+            )}
+        </div>
+    );
 }
 
 function ImgWithOpts({ src, alt, opts }: { src: string; alt: string; opts: ImgOpts }) {
@@ -199,18 +241,17 @@ function ImgWithOpts({ src, alt, opts }: { src: string; alt: string; opts: ImgOp
     const visH = Math.max(0.1, 1 - opts.cropTop - opts.cropBottom);
     const widthPct = Math.round(opts.scale * 100);
     const noCrop = opts.cropTop === 0 && opts.cropBottom === 0 && opts.cropLeft === 0 && opts.cropRight === 0;
+    const alignJC = opts.align === 'left' ? 'flex-start' : opts.align === 'right' ? 'flex-end' : 'center';
 
     if (noCrop) {
         return (
-            <div style={{ display: 'flex', justifyContent: alignToFlex(opts.align), width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: alignJC, width: '100%' }}>
                 <img src={src} alt={alt} style={{ width: `${widthPct}%`, height: 'auto', display: 'block' }} />
             </div>
         );
     }
-
-    // 자르기 적용: wrapper에 overflow:hidden + 내부 이미지를 크게 잡고 음수 위치로 이동
     return (
-        <div style={{ display: 'flex', justifyContent: alignToFlex(opts.align), width: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: alignJC, width: '100%' }}>
             <div style={{
                 width: `${widthPct}%`,
                 overflow: 'hidden',
@@ -234,55 +275,6 @@ function ImgWithOpts({ src, alt, opts }: { src: string; alt: string; opts: ImgOp
     );
 }
 
-function AdjustOverlay({ onClick }: { onClick: () => void }) {
-    return (
-        <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onClick(); }}
-            className="exam-adjust-btn"
-            title="이미지 조정 (크기 · 정렬 · 자르기)"
-        >
-            ✏️ 이미지 조정
-        </button>
-    );
-}
-
-function ExamBlock({ block, onAdjustItem }: { block: FlatBlock; onAdjustItem?: (itemId: number) => void }) {
-    if (block.type === 'section') {
-        return (
-            <div className="exam-block exam-block-section">
-                <div className="exam-section-row">
-                    <span className="exam-section-tag">{block.label}</span>
-                    {block.subTitle && <span className="exam-section-subtitle">{block.subTitle}</span>}
-                </div>
-            </div>
-        );
-    }
-    if (block.type === 'passage') {
-        return (
-            <div className={`exam-block exam-block-passage ${block.spanFull ? 'span-full' : ''} ${onAdjustItem ? 'has-adjust' : ''}`}>
-                <div className="exam-passage-box">
-                    <ImgWithOpts src={block.imageUrl} alt="passage" opts={block.opts} />
-                </div>
-                {onAdjustItem && <AdjustOverlay onClick={() => onAdjustItem(block.itemId)} />}
-            </div>
-        );
-    }
-    // question
-    return (
-        <div className={`exam-block exam-block-question ${block.long ? 'long' : ''} ${onAdjustItem ? 'has-adjust' : ''}`}>
-            <div className="exam-question-no-row">
-                <span className="exam-question-no">{block.displayNo}.</span>
-                {block.originalNo != null && (
-                    <span className="exam-question-original-no">[원본 {block.originalNo}번]</span>
-                )}
-            </div>
-            <ImgWithOpts src={block.imageUrl} alt={`q-${block.displayNo}`} opts={block.opts} />
-            {onAdjustItem && <AdjustOverlay onClick={() => onAdjustItem(block.itemId)} />}
-        </div>
-    );
-}
-
 function hasAnswers(exam: ExamHydrated): boolean {
     return collectAnswers(exam).some(a => a.answer);
 }
@@ -292,9 +284,7 @@ function collectAnswers(exam: ExamHydrated): { no: number; answer: string | null
     let no = 1;
     for (const it of exam.items) {
         if (it.kind === 'passage' && it.passage?.questions) {
-            for (const q of it.passage.questions) {
-                out.push({ no: no++, answer: q.answer || null });
-            }
+            for (const q of it.passage.questions) out.push({ no: no++, answer: q.answer || null });
         } else if (it.kind === 'question' && it.question) {
             out.push({ no: no++, answer: it.question.answer || null });
         }
@@ -302,8 +292,9 @@ function collectAnswers(exam: ExamHydrated): { no: number; answer: string | null
     return out;
 }
 
-// HWPX 시안에 맞춘 인쇄용 CSS
-// A4 / 2단 / 나눔명조(본문) / 나눔고딕(헤더/태그) / 보라색 태그
+// ExamItem 옵션은 미리보기·PDF 공통. flattenSlots에서 사용.
+export { flattenSlots as flattenExam };
+
 const EXAM_PAPER_CSS = `
 .exam-paper-root {
     font-family: 'Nanum Myeongjo', 'Batang', 'Times New Roman', serif;
@@ -312,20 +303,15 @@ const EXAM_PAPER_CSS = `
 }
 
 @media print {
-    @page {
-        size: A4;
-        margin: 0;
-    }
-    html, body {
-        margin: 0;
-        padding: 0;
-    }
+    @page { size: A4; margin: 0; }
+    html, body { margin: 0; padding: 0; }
+    .exam-adjust-btn { display: none !important; }
 }
 
 .exam-page {
     width: 210mm;
     height: 297mm;
-    padding: 18mm 14mm 16mm 14mm;
+    padding: 12mm 14mm;
     box-sizing: border-box;
     background: white;
     page-break-after: always;
@@ -334,128 +320,110 @@ const EXAM_PAPER_CSS = `
     flex-direction: column;
     overflow: hidden;
 }
+.exam-page:last-child { page-break-after: auto; }
 
-.exam-page:last-child {
-    page-break-after: auto;
-}
-
-/* 큰 헤더 (페이지 1만) */
-.exam-header-large {
-    text-align: center;
-    margin-bottom: 4mm;
-}
-.exam-header-large .exam-subtitle {
-    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
-    font-size: 11pt;
-    color: #1f2937;
-    margin: 0 0 3mm 0;
-    font-weight: 500;
-    letter-spacing: 0.3px;
-}
-.exam-header-large .exam-title {
-    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
-    font-size: 22pt;
-    font-weight: 800;
-    margin: 0 0 5mm 0;
-    letter-spacing: 1.5px;
-    color: #0f172a;
-}
-
-/* 작은 헤더 (정답표 페이지) */
-.exam-header-small {
-    display: flex;
-    justify-content: space-between;
+/* 헤더 */
+.exam-header {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    padding-bottom: 3mm;
+    padding-bottom: 4mm;
     border-bottom: 1.5px solid #1f2937;
     margin-bottom: 6mm;
 }
-.exam-header-small-left {
-    display: flex;
-    align-items: center;
-    gap: 4mm;
+.exam-header-left {
+    text-align: left;
+    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
+    font-size: 9pt;
+    color: #6b7280;
+    font-weight: 600;
 }
-.exam-header-small-right {
-    font-family: 'Nanum Gothic', sans-serif;
-    font-size: 9.5pt;
-    color: #4b5563;
+.exam-header-title {
+    text-align: center;
+    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
+    font-size: 15pt;
+    font-weight: 800;
+    margin: 0;
+    letter-spacing: 0.5px;
+    color: #0f172a;
+}
+.exam-header-right {
     text-align: right;
-    max-width: 80mm;
+}
+.exam-page-no {
+    display: inline-block;
+    background: #0f172a;
+    color: white;
+    font-family: 'Nanum Gothic', sans-serif;
+    font-size: 10pt;
+    font-weight: 800;
+    padding: 1mm 4mm;
+    border-radius: 2px;
 }
 
-/* 섹션 태그 (보라색 둥근 알약) */
-.exam-section-row {
+/* 본문 = 좌·우 두 슬롯, 세로 구분선 */
+.exam-body {
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr 1px 1fr;
+    gap: 0;
+    overflow: hidden;
+}
+.exam-body::before {
+    content: '';
+    grid-column: 2;
+    grid-row: 1;
+    background: #1f2937;
+    justify-self: center;
+    width: 1.2px;
+    height: 100%;
+}
+.exam-slot {
+    padding: 0 5mm;
+    overflow: hidden;
+    min-width: 0;
     display: flex;
-    align-items: center;
-    gap: 4mm;
+    flex-direction: column;
+}
+.exam-slot-left { grid-column: 1; grid-row: 1; }
+.exam-slot-right { grid-column: 3; grid-row: 1; }
+
+.exam-slot-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.exam-section-row {
+    margin-bottom: 3mm;
     padding-bottom: 2mm;
-    border-bottom: 1.5px solid #1f2937;
-    margin-bottom: 4mm;
+    border-bottom: 1.2px solid #1f2937;
 }
 .exam-section-tag {
     display: inline-block;
     background: #4c1d95;
     color: white;
-    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
-    font-size: 10.5pt;
-    font-weight: 800;
-    padding: 1.5mm 5mm;
-    border-radius: 20mm;
-    letter-spacing: 0.5px;
-}
-.exam-section-subtitle {
-    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
+    font-family: 'Nanum Gothic', sans-serif;
     font-size: 10pt;
-    font-weight: 500;
-    color: #1f2937;
-}
-
-/* 본문 (2단) */
-.exam-body {
-    column-count: 2;
-    column-gap: 8mm;
-    column-rule: 1.2px solid #1f2937;
-    column-fill: balance;
-    flex: 1 1 0;
-    min-height: 0;
-    min-width: 0;
-    font-size: 10.5pt;
-    line-height: 1.55;
-}
-
-.exam-block {
-    break-inside: avoid;
-    page-break-inside: avoid;
-    -webkit-column-break-inside: avoid;
-    margin-bottom: 5mm;
-    /* 각 문제/지문이 다음 단으로 자연스럽게 흐르되 한 단에 한 항목씩 깔끔히 들어가도록 */
-    break-after: column;
-    -webkit-column-break-after: always;
-}
-
-/* 섹션 라벨(보라 태그)만 양 단 가로지름. 지문/문제는 모두 한 단 안에 통째로. */
-.exam-block-section {
-    column-span: all;
-    break-after: auto;
-    -webkit-column-break-after: auto;
+    font-weight: 800;
+    padding: 1.5mm 4mm;
+    border-radius: 20mm;
+    letter-spacing: 0.4px;
 }
 
 .exam-passage-box {
     border: 1.2px solid #1f2937;
     padding: 4mm;
     background: white;
+    max-height: 100%;
+    overflow: hidden;
 }
-.exam-passage-box img {
-    width: 100%;
-    height: auto;
-    display: block;
-}
+.exam-passage-box img { width: 100%; display: block; }
 
-.exam-block-question {
-    break-inside: avoid;
-    page-break-inside: avoid;
-    -webkit-column-break-inside: avoid;
-}
 .exam-question-no-row {
     display: flex;
     align-items: baseline;
@@ -463,9 +431,9 @@ const EXAM_PAPER_CSS = `
     margin-bottom: 2mm;
 }
 .exam-question-no {
-    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
+    font-family: 'Nanum Gothic', sans-serif;
     font-weight: 800;
-    font-size: 11.5pt;
+    font-size: 12pt;
     color: #0f172a;
 }
 .exam-question-original-no {
@@ -474,21 +442,24 @@ const EXAM_PAPER_CSS = `
     color: #94a3b8;
     font-weight: 500;
 }
-.exam-block-question img {
-    width: 100%;
-    height: auto;
-    display: block;
+.exam-question-body {
+    flex: 1 1 auto;
+    overflow: hidden;
 }
 
-/* 정답표 */
+/* 정답표 페이지 */
+.exam-answer-body {
+    flex: 1 1 0;
+    min-height: 0;
+    padding: 4mm 0;
+    overflow: hidden;
+}
 .exam-answer-grid {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
     gap: 3mm 6mm;
-    font-family: 'Nanum Gothic', 'Malgun Gothic', sans-serif;
+    font-family: 'Nanum Gothic', sans-serif;
     font-size: 11pt;
-    flex-grow: 1;
-    align-content: start;
 }
 .exam-answer-cell {
     display: flex;
@@ -497,60 +468,65 @@ const EXAM_PAPER_CSS = `
     padding: 1.5mm 2mm;
     border-bottom: 1px dashed #cbd5e1;
 }
-.exam-answer-no {
-    font-weight: 800;
-    color: #0f172a;
-    min-width: 6mm;
-}
-.exam-answer-val {
-    font-weight: 600;
-    color: #4c1d95;
-}
+.exam-answer-no { font-weight: 800; color: #0f172a; min-width: 6mm; }
+.exam-answer-val { font-weight: 600; color: #4c1d95; }
 
 /* 푸터 */
 .exam-footer {
-    text-align: center;
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 4mm;
     padding-top: 4mm;
     border-top: 1px solid #e2e8f0;
     margin-top: 4mm;
 }
+.exam-page-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2mm;
+    padding: 1mm 4mm;
+    border: 1px solid #1f2937;
+    font-family: 'Nanum Gothic', sans-serif;
+    font-size: 9pt;
+    font-weight: 800;
+    color: #0f172a;
+    border-radius: 1mm;
+    background: white;
+}
+.exam-page-badge .pn { font-size: 11pt; }
+.exam-page-badge .pt { color: #6b7280; font-size: 9pt; }
 .exam-copyright {
     font-family: 'Nanum Gothic', sans-serif;
     font-size: 7.5pt;
     color: #94a3b8;
-    margin: 0;
+    text-align: right;
 }
 
-/* 이미지 조정 버튼 (화면 미리보기 전용 — 인쇄 시 숨김) */
-.exam-block.has-adjust {
-    position: relative;
-}
+/* 이미지 조정 버튼 (화면 미리보기 전용) */
 .exam-adjust-btn {
     position: absolute;
-    top: 4px;
-    right: 4px;
+    top: 2mm;
+    right: 2mm;
     z-index: 10;
     background: rgba(13,148,136,0.95);
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 3px 8px;
-    font-size: 10pt;
+    font-size: 9pt;
     font-weight: 700;
     cursor: pointer;
     opacity: 0;
-    transition: opacity 0.15s, transform 0.15s;
+    transition: opacity 0.15s;
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    font-family: 'Nanum Gothic', sans-serif;
 }
-.exam-block.has-adjust:hover .exam-adjust-btn {
-    opacity: 1;
-}
-.exam-adjust-btn:hover {
-    background: rgba(15,118,110,1);
-    transform: scale(1.05);
-}
+.exam-slot-inner:hover .exam-adjust-btn { opacity: 1; }
+.exam-adjust-btn:hover { background: rgba(15,118,110,1); }
 
-/* Screen-only preview tweaks */
 @media screen {
     .exam-paper-root {
         background: #e2e8f0;
@@ -560,8 +536,5 @@ const EXAM_PAPER_CSS = `
         margin: 0 auto 20px auto;
         box-shadow: 0 10px 40px rgba(0,0,0,0.15);
     }
-}
-@media print {
-    .exam-adjust-btn { display: none !important; }
 }
 `;
