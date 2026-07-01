@@ -248,7 +248,11 @@ function SlotRender({
         };
     }, [editable]);
 
-    // Shift + 이미지 위 드래그 = 남길 영역 사각형 그리기 → 놓으면 canvas로 실제 crop → Vercel Blob 업로드 → 새 이미지로 교체
+    // Shift + 이미지 위 드래그 = 남길 영역 사각형 그리기 → 놓으면 서버에서 sharp로 실제 crop → 이미지 URL 교체
+    // mousemove 마지막 좌표는 ref에 저장 (setState 함수 안에서 side effect 피함)
+    const latestRect = React.useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+    const wrapRectRef = React.useRef<{ width: number; height: number } | null>(null);
+
     const onImgMouseDown = (e: React.MouseEvent) => {
         if (!editable) return;
         if (!e.shiftKey) return;
@@ -256,47 +260,69 @@ function SlotRender({
         const wrap = imgWrapRef.current;
         if (!wrap) return;
         const rect = wrap.getBoundingClientRect();
+        wrapRectRef.current = { width: rect.width, height: rect.height };
         const startX = e.clientX - rect.left;
         const startY = e.clientY - rect.top;
+        const initial = { x1: startX, y1: startY, x2: startX, y2: startY };
+        latestRect.current = initial;
         setDragMode('crop');
-        setCropRect({ x1: startX, y1: startY, x2: startX, y2: startY });
+        setCropRect(initial);
 
         const move = (ev: MouseEvent) => {
             const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
             const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
-            setCropRect(prev => prev ? { ...prev, x2: nx, y2: ny } : null);
+            const next = { x1: startX, y1: startY, x2: nx, y2: ny };
+            latestRect.current = next;
+            setCropRect(next);
         };
         const up = () => {
             window.removeEventListener('mousemove', move);
             window.removeEventListener('mouseup', up);
             setDragMode(null);
-            setCropRect(cr => {
-                if (!cr) return null;
-                const w = rect.width, h = rect.height;
-                const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
-                const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
-                if (right - left < 8 || bottom - top < 8) return null;
-                // wrap 좌표계 사각형(0~1) → canvas crop 후 blob 업로드
-                const u1 = left / w, u2 = right / w, v1 = top / h, v2 = bottom / h;
-                doCropAndReplace(slot.imageUrl, slot.itemId, u1, v1, u2, v2);
-                return null;
-            });
+            setCropRect(null);
+
+            const cr = latestRect.current;
+            const wr = wrapRectRef.current;
+            latestRect.current = null;
+            wrapRectRef.current = null;
+            if (!cr || !wr) return;
+
+            const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
+            const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
+            if (right - left < 8 || bottom - top < 8) return;
+
+            // wrap 좌표계 사각형(0~1) → 현재 slot.opts.crop을 반영해서 원본 이미지 대비 절대 비율로 변환
+            const u1w = left / wr.width, u2w = right / wr.width;
+            const v1w = top / wr.height, v2w = bottom / wr.height;
+            // 만약 croppedImageUrl 사용 중이면 sourceUrl은 croppedImageUrl. slot.imageUrl이 곧 그것.
+            // 그리고 croppedImageUrl 사용 시 cropL/T/R/B = 0 이므로 wrap 좌표 = 원본 좌표.
+            // CSS crop 잔여값이 있는 경우 (legacy) 정확 계산 필요.
+            const csL = slot.opts.cropLeft, csR = slot.opts.cropRight;
+            const csT = slot.opts.cropTop, csB = slot.opts.cropBottom;
+            const visW = Math.max(0.01, 1 - csL - csR);
+            const visH = Math.max(0.01, 1 - csT - csB);
+            const u1 = csL + u1w * visW;
+            const u2 = csL + u2w * visW;
+            const v1 = csT + v1w * visH;
+            const v2 = csT + v2w * visH;
+            doCropAndReplace(slot.imageUrl, slot.itemId, u1, v1, u2, v2);
         };
         window.addEventListener('mousemove', move);
         window.addEventListener('mouseup', up);
     };
 
+    const [cropping, setCropping] = React.useState(false);
     const doCropAndReplace = async (srcUrl: string, itemId: number, u1: number, v1: number, u2: number, v2: number) => {
-        if (!examSetId) return;
+        if (!examSetId) {
+            alert('자르기 저장 실패: examSetId 미지정 (미리보기 페이지에서만 가능)');
+            return;
+        }
+        setCropping(true);
         try {
-            const blob = await cropImageToBlob(srcUrl, u1, v1, u2, v2);
-            const fd = new FormData();
-            fd.append('file', blob, 'cropped.png');
-            fd.append('itemId', String(itemId));
-            fd.append('examSetId', String(examSetId));
             const res = await fetch('/api/admin/exam-set/item/crop-image', {
                 method: 'POST',
-                body: fd,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ itemId, examSetId, sourceUrl: srcUrl, u1, v1, u2, v2 }),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
@@ -306,6 +332,8 @@ function SlotRender({
             onInlineCommit?.(itemId);
         } catch (e: any) {
             alert(`자르기 실패: ${e?.message || String(e)}`);
+        } finally {
+            setCropping(false);
         }
     };
 
@@ -489,6 +517,11 @@ function SlotRender({
                         <span className="exam-crop-rect-label">이 영역만 남깁니다</span>
                     </div>
                 )}
+                {cropping && (
+                    <div className="exam-crop-loading">
+                        <div className="exam-crop-loading-inner">자르는 중...</div>
+                    </div>
+                )}
             </div>
             {onAdjustItem && !editable && (
                 <button
@@ -545,35 +578,6 @@ function clamp01(v: number): number {
     return Math.max(0, Math.min(0.45, v));
 }
 
-// 이미지 URL을 로드하고 canvas로 지정 영역만 자른 blob(png)을 반환.
-// u1,v1,u2,v2: 원본 이미지 대비 상대 좌표 (0~1). u1<u2, v1<v2.
-async function cropImageToBlob(imgUrl: string, u1: number, v1: number, u2: number, v2: number): Promise<Blob> {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = (e) => reject(new Error('이미지 로드 실패'));
-        img.src = imgUrl;
-    });
-    const W = img.naturalWidth;
-    const H = img.naturalHeight;
-    const sx = Math.max(0, Math.floor(W * u1));
-    const sy = Math.max(0, Math.floor(H * v1));
-    const sw = Math.max(1, Math.floor(W * (u2 - u1)));
-    const sh = Math.max(1, Math.floor(H * (v2 - v1)));
-    const canvas = document.createElement('canvas');
-    canvas.width = sw;
-    canvas.height = sh;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('canvas 컨텍스트 획득 실패');
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-    return new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(b => {
-            if (b) resolve(b);
-            else reject(new Error('canvas.toBlob 실패'));
-        }, 'image/png');
-    });
-}
 
 function ImgWithOpts({ src, alt, opts }: { src: string; alt: string; opts: ImgOpts }) {
     const visW = Math.max(0.1, 1 - opts.cropLeft - opts.cropRight);
@@ -949,6 +953,26 @@ const EXAM_PAPER_CSS = `
     margin: -1px 0 0 -1px;
     white-space: nowrap;
     box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.exam-crop-loading {
+    position: absolute;
+    inset: 0;
+    background: rgba(15,23,42,0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+}
+.exam-crop-loading-inner {
+    background: white;
+    color: #0f172a;
+    font-family: 'Nanum Gothic', 'Pretendard', sans-serif;
+    font-size: 10pt;
+    font-weight: 800;
+    padding: 6px 14px;
+    border-radius: 999px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
 }
 
 /* 이미지 조정 버튼 (화면 미리보기 전용) */

@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { put } from '@vercel/blob';
+import sharp from 'sharp';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin } from '@/lib/session';
 
-const MAX = 15 * 1024 * 1024;
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 
-// 클라이언트에서 canvas로 자른 이미지 blob을 받아 Vercel Blob에 저장하고
-// ExamItem.croppedImageUrl을 갱신한다. (또한 cropTop/Bottom/Left/Right는 0으로 리셋 —
-// 이미지 자체가 이미 잘렸으므로 CSS crop 필요 없음)
+// 서버 사이드 crop.
+// body: { itemId, examSetId, sourceUrl, u1, v1, u2, v2 } (u,v = 0~1 원본 이미지 대비 상대 좌표)
+// 서버가 sourceUrl에서 이미지 fetch → sharp로 그 영역만 잘라내 PNG → Vercel Blob 업로드 → ExamItem 갱신
 export async function POST(request: NextRequest) {
     const session = await requireAdmin();
     if (!session) {
@@ -16,47 +18,98 @@ export async function POST(request: NextRequest) {
     }
     const ownerId = Number(session.userId);
     try {
-        const formData = await request.formData();
-        const file = formData.get('file') as File | null;
-        const itemIdRaw = formData.get('itemId');
-        const examSetIdRaw = formData.get('examSetId');
-        if (!file) return NextResponse.json({ error: '파일이 없습니다.' }, { status: 400 });
-        if (!itemIdRaw || !examSetIdRaw) return NextResponse.json({ error: 'itemId/examSetId가 필요합니다.' }, { status: 400 });
-        if (file.size > MAX) return NextResponse.json({ error: '이미지가 너무 큽니다.' }, { status: 413 });
+        const body = await request.json();
+        const { itemId, examSetId, sourceUrl, u1, v1, u2, v2 } = body || {};
+        if (!itemId || !examSetId || !sourceUrl) {
+            return NextResponse.json({ error: 'itemId/examSetId/sourceUrl 필요.' }, { status: 400 });
+        }
+        const uu1 = clamp01(u1), vv1 = clamp01(v1), uu2 = clamp01(u2), vv2 = clamp01(v2);
+        if (uu2 - uu1 < 0.01 || vv2 - vv1 < 0.01) {
+            return NextResponse.json({ error: '자르기 영역이 너무 작습니다.' }, { status: 400 });
+        }
 
-        const itemId = parseInt(String(itemIdRaw), 10);
-        const examSetId = parseInt(String(examSetIdRaw), 10);
-
-        const exam = await prisma.examSet.findUnique({ where: { id: examSetId } });
+        const exam = await prisma.examSet.findUnique({ where: { id: parseInt(String(examSetId), 10) } });
         if (!exam || exam.ownerId !== ownerId) {
             return NextResponse.json({ error: '시험지를 찾을 수 없습니다.' }, { status: 404 });
         }
-        const item = await prisma.examItem.findUnique({ where: { id: itemId } });
-        if (!item || item.examSetId !== examSetId) {
+        const item = await prisma.examItem.findUnique({ where: { id: parseInt(String(itemId), 10) } });
+        if (!item || item.examSetId !== exam.id) {
             return NextResponse.json({ error: '항목을 찾을 수 없습니다.' }, { status: 404 });
         }
 
-        const bytes = await file.arrayBuffer();
+        // 원본 이미지 다운로드
+        const res = await fetch(sourceUrl);
+        if (!res.ok) {
+            return NextResponse.json({ error: '원본 이미지를 가져오지 못했습니다.', detail: res.statusText }, { status: 502 });
+        }
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        // sharp로 원본 dimension 확인 후 픽셀 좌표로 변환 → crop
+        const meta = await sharp(buffer).metadata();
+        const W = meta.width || 0;
+        const H = meta.height || 0;
+        if (!W || !H) {
+            return NextResponse.json({ error: '이미지 크기를 알 수 없습니다.' }, { status: 400 });
+        }
+        const sx = Math.max(0, Math.floor(W * uu1));
+        const sy = Math.max(0, Math.floor(H * vv1));
+        const sw = Math.max(1, Math.floor(W * (uu2 - uu1)));
+        const sh = Math.max(1, Math.floor(H * (vv2 - vv1)));
+
+        const cropped = await sharp(buffer)
+            .extract({ left: sx, top: sy, width: Math.min(sw, W - sx), height: Math.min(sh, H - sy) })
+            .png()
+            .toBuffer();
+
         const filename = `${uuidv4()}-cropped.png`;
-        const blob = await put(`uploads/${filename}`, Buffer.from(bytes) as Buffer, {
+        const blob = await put(`uploads/${filename}`, cropped as Buffer, {
             access: 'public',
             contentType: 'image/png',
         });
 
-        // crop 값 리셋 (이미지 자체가 이미 잘림)
         const updated = await prisma.examItem.update({
-            where: { id: itemId },
+            where: { id: item.id },
             data: {
                 croppedImageUrl: blob.url,
-                cropTop: 0,
-                cropBottom: 0,
-                cropLeft: 0,
-                cropRight: 0,
+                cropTop: 0, cropBottom: 0, cropLeft: 0, cropRight: 0,
             },
         });
+
         return NextResponse.json({ item: updated, url: blob.url });
     } catch (error: any) {
-        console.error('Crop Image Upload Error:', error);
-        return NextResponse.json({ error: '자르기 저장 실패', detail: error?.message || String(error) }, { status: 500 });
+        console.error('Server Crop Error:', error);
+        return NextResponse.json({ error: '자르기 실패', detail: error?.message || String(error) }, { status: 500 });
     }
+}
+
+// 자르기 취소 = croppedImageUrl null 로 되돌림
+export async function DELETE(request: NextRequest) {
+    const session = await requireAdmin();
+    if (!session) {
+        return NextResponse.json({ error: '관리자 권한이 필요합니다.' }, { status: 403 });
+    }
+    const ownerId = Number(session.userId);
+    try {
+        const { searchParams } = new URL(request.url);
+        const itemId = searchParams.get('itemId');
+        if (!itemId) return NextResponse.json({ error: 'itemId 필요.' }, { status: 400 });
+        const item = await prisma.examItem.findUnique({ where: { id: parseInt(itemId, 10) }, include: { examSet: true } });
+        if (!item || item.examSet.ownerId !== ownerId) {
+            return NextResponse.json({ error: '항목을 찾을 수 없습니다.' }, { status: 404 });
+        }
+        const updated = await prisma.examItem.update({
+            where: { id: item.id },
+            data: { croppedImageUrl: null },
+        });
+        return NextResponse.json({ item: updated });
+    } catch (error: any) {
+        console.error('Reset Crop Error:', error);
+        return NextResponse.json({ error: '자르기 해제 실패', detail: error?.message || String(error) }, { status: 500 });
+    }
+}
+
+function clamp01(v: any): number {
+    const n = typeof v === 'number' ? v : parseFloat(String(v));
+    if (!isFinite(n)) return 0;
+    return Math.max(0, Math.min(1, n));
 }
