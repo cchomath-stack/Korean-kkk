@@ -226,72 +226,78 @@ function SlotRender({
         };
     }, [editable]);
 
-    const onImgMouseDown = (e: React.MouseEvent) => {
-        if (!editable) return;
-        if (!e.shiftKey) return; // 이미지 본체 드래그는 Shift일 때만 (자르기)
-        e.preventDefault();
-        const wrap = imgWrapRef.current;
-        if (!wrap) return;
-        const rect = wrap.getBoundingClientRect();
-
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        setDragMode('crop');
-        setCropRect({ x1: x, y1: y, x2: x, y2: y });
-
-        const move = (ev: MouseEvent) => {
-            const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
-            const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
-            setCropRect(prev => prev ? { ...prev, x2: nx, y2: ny } : null);
-        };
-        const up = () => {
-            window.removeEventListener('mousemove', move);
-            window.removeEventListener('mouseup', up);
-            setDragMode(null);
-            setCropRect(cr => {
-                if (!cr || !onInlineChange) return null;
-                const w = rect.width, h = rect.height;
-                const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
-                const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
-                if (right - left < 8 || bottom - top < 8) return null;
-                const u1 = left / w, u2 = right / w, v1 = top / h, v2 = bottom / h;
-                const visW = 1 - slot.opts.cropLeft - slot.opts.cropRight;
-                const visH = 1 - slot.opts.cropTop - slot.opts.cropBottom;
-                const newCropLeft = clamp01(slot.opts.cropLeft + u1 * visW);
-                const newCropRight = clamp01(slot.opts.cropRight + (1 - u2) * visW);
-                const newCropTop = clamp01(slot.opts.cropTop + v1 * visH);
-                const newCropBottom = clamp01(slot.opts.cropBottom + (1 - v2) * visH);
-                onInlineChange(slot.itemId, {
-                    cropTop: newCropTop, cropBottom: newCropBottom,
-                    cropLeft: newCropLeft, cropRight: newCropRight,
-                });
-                onInlineCommit?.(slot.itemId);
-                return null;
-            });
-        };
-        window.addEventListener('mousemove', move);
-        window.addEventListener('mouseup', up);
+    // 이미지 body 드래그는 아무 동작 안 함 (자르기는 오직 Shift + 핸들 드래그로만)
+    const onImgMouseDown = (_e: React.MouseEvent) => {
+        // no-op
     };
 
-    // 좌상단 앵커 리사이즈: 이미지의 좌상단은 슬롯 좌상단에 고정. 마우스 x 위치가 새 폭 결정.
-    // 어떤 핸들을 잡든 동일 동작 (imageScale 하나만 조절).
-    const onHandleMouseDown = (e: React.MouseEvent) => {
+    // 리사이즈 (Shift 없음): 좌상단 앵커, 마우스 x 위치가 새 폭 결정
+    const onScaleStart = (e: React.MouseEvent) => {
         if (!editable || !onInlineChange) return;
         e.preventDefault();
         e.stopPropagation();
         const wrap = imgWrapRef.current;
         if (!wrap) return;
-        const slotEl = wrap.parentElement; // 슬롯(단) 컨테이너
+        const slotEl = wrap.parentElement;
         if (!slotEl) return;
         const slotRect = slotEl.getBoundingClientRect();
-        const anchorX = wrap.getBoundingClientRect().left; // 이미지 좌상단 X
+        const anchorX = wrap.getBoundingClientRect().left;
         setDragMode('scale');
 
         const move = (ev: MouseEvent) => {
-            // 마우스 x가 이미지의 새 우측 경계. 폭 = mouseX - 좌상단.
             const newWidthPx = Math.max(20, ev.clientX - anchorX);
             const nextScale = clamp(newWidthPx / slotRect.width, 0.3, 2.0);
             onInlineChange(slot.itemId, { scale: nextScale });
+        };
+        const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            setDragMode(null);
+            onInlineCommit?.(slot.itemId);
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    };
+
+    // 자르기 (Shift + 핸들 드래그): 핸들 방향의 crop 값을 조절
+    // dirX: -1 (좌측 핸들), 0 (가운데), +1 (우측 핸들)
+    // dirY: -1 (위쪽 핸들), 0 (가운데), +1 (아래쪽 핸들)
+    const onCropStart = (e: React.MouseEvent, dirX: number, dirY: number) => {
+        if (!editable || !onInlineChange) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wrap = imgWrapRef.current;
+        if (!wrap) return;
+        const rect = wrap.getBoundingClientRect();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startCropLeft = slot.opts.cropLeft;
+        const startCropRight = slot.opts.cropRight;
+        const startCropTop = slot.opts.cropTop;
+        const startCropBottom = slot.opts.cropBottom;
+        const visW0 = Math.max(0.05, 1 - startCropLeft - startCropRight);
+        const visH0 = Math.max(0.05, 1 - startCropTop - startCropBottom);
+        setDragMode('crop');
+
+        const move = (ev: MouseEvent) => {
+            const dx = ev.clientX - startX;
+            const dy = ev.clientY - startY;
+            const patch: any = {};
+            if (dirX === -1) {
+                // 좌측 핸들: 오른쪽으로 드래그 = cropLeft 증가
+                patch.cropLeft = clamp01(startCropLeft + (dx / rect.width) * visW0);
+            } else if (dirX === 1) {
+                // 우측 핸들: 왼쪽으로 드래그 = cropRight 증가
+                patch.cropRight = clamp01(startCropRight + (-dx / rect.width) * visW0);
+            }
+            if (dirY === -1) {
+                // 위쪽 핸들: 아래로 드래그 = cropTop 증가
+                patch.cropTop = clamp01(startCropTop + (dy / rect.height) * visH0);
+            } else if (dirY === 1) {
+                // 아래쪽 핸들: 위로 드래그 = cropBottom 증가
+                patch.cropBottom = clamp01(startCropBottom + (-dy / rect.height) * visH0);
+            }
+            onInlineChange(slot.itemId, patch);
         };
         const up = () => {
             window.removeEventListener('mousemove', move);
@@ -368,7 +374,7 @@ function SlotRender({
                 onWheel={editable ? onImgWheel : undefined}
             >
                 <img src={slot.imageUrl} alt={isPassage ? 'passage' : `q-${slot.displayNo}`} style={imgStyle} draggable={false} />
-                {editable && <EditHandles onMouseDown={onHandleMouseDown} />}
+                {editable && <EditHandles shiftHeld={shiftHeld} onScaleStart={onScaleStart} onCropStart={onCropStart} />}
                 {dragMode === 'crop' && cropRect && (
                     <div
                         className="exam-crop-rect"
@@ -395,17 +401,33 @@ function SlotRender({
     );
 }
 
-function EditHandles({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+const HANDLE_DEFS: { pos: string; dirX: number; dirY: number }[] = [
+    { pos: 'tl', dirX: -1, dirY: -1 },
+    { pos: 'tr', dirX: 1, dirY: -1 },
+    { pos: 'bl', dirX: -1, dirY: 1 },
+    { pos: 'br', dirX: 1, dirY: 1 },
+    { pos: 'tm', dirX: 0, dirY: -1 },
+    { pos: 'bm', dirX: 0, dirY: 1 },
+    { pos: 'lm', dirX: -1, dirY: 0 },
+    { pos: 'rm', dirX: 1, dirY: 0 },
+];
+
+function EditHandles({
+    shiftHeld, onScaleStart, onCropStart,
+}: {
+    shiftHeld: boolean;
+    onScaleStart: (e: React.MouseEvent) => void;
+    onCropStart: (e: React.MouseEvent, dirX: number, dirY: number) => void;
+}) {
     return (
         <>
-            <div className="exam-handle exam-handle-tl" onMouseDown={onMouseDown} />
-            <div className="exam-handle exam-handle-tr" onMouseDown={onMouseDown} />
-            <div className="exam-handle exam-handle-bl" onMouseDown={onMouseDown} />
-            <div className="exam-handle exam-handle-br" onMouseDown={onMouseDown} />
-            <div className="exam-handle exam-handle-tm" onMouseDown={onMouseDown} />
-            <div className="exam-handle exam-handle-bm" onMouseDown={onMouseDown} />
-            <div className="exam-handle exam-handle-lm" onMouseDown={onMouseDown} />
-            <div className="exam-handle exam-handle-rm" onMouseDown={onMouseDown} />
+            {HANDLE_DEFS.map(h => (
+                <div
+                    key={h.pos}
+                    className={`exam-handle exam-handle-${h.pos} ${shiftHeld ? 'crop-mode' : ''}`}
+                    onMouseDown={(e) => shiftHeld ? onCropStart(e, h.dirX, h.dirY) : onScaleStart(e)}
+                />
+            ))}
         </>
     );
 }
@@ -703,7 +725,7 @@ const EXAM_PAPER_CSS = `
     outline: 1.5px solid rgba(59,130,246,0.5);
 }
 
-/* 8방향 핸들 (한글식 파란 사각점) */
+/* 8방향 핸들 — 리사이즈 모드 (한글식 파란 사각점) */
 .exam-handle {
     position: absolute;
     width: 12px;
@@ -712,7 +734,7 @@ const EXAM_PAPER_CSS = `
     border: 1.5px solid white;
     box-shadow: 0 0 3px rgba(0,0,0,0.35);
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, background 0.1s, border-color 0.1s;
     z-index: 15;
     pointer-events: auto;
 }
@@ -720,7 +742,6 @@ const EXAM_PAPER_CSS = `
 .exam-slot-inner.editable .exam-editable-img:active .exam-handle {
     opacity: 1;
 }
-.exam-handle:hover { transform: scale(1.3) translate(var(--tx, 0), var(--ty, 0)); }
 .exam-handle-tl { left: 0; top: 0; transform: translate(-50%, -50%); cursor: nwse-resize; }
 .exam-handle-tr { right: 0; top: 0; transform: translate(50%, -50%); cursor: nesw-resize; }
 .exam-handle-bl { left: 0; bottom: 0; transform: translate(-50%, 50%); cursor: nesw-resize; }
@@ -729,6 +750,39 @@ const EXAM_PAPER_CSS = `
 .exam-handle-bm { left: 50%; bottom: 0; transform: translate(-50%, 50%); cursor: ns-resize; }
 .exam-handle-lm { left: 0; top: 50%; transform: translate(-50%, -50%); cursor: ew-resize; }
 .exam-handle-rm { right: 0; top: 50%; transform: translate(50%, -50%); cursor: ew-resize; }
+
+/* Shift 눌린 상태 — 자르기 마커 (검은 L/T 모양) */
+.exam-handle.crop-mode {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    width: 16px;
+    height: 16px;
+}
+.exam-handle.crop-mode::before,
+.exam-handle.crop-mode::after {
+    content: '';
+    position: absolute;
+    background: #0f172a;
+}
+/* 코너: L자 (수평 + 수직 막대) */
+.exam-handle-tl.crop-mode::before { top: 0; left: 0; width: 14px; height: 2.5px; }
+.exam-handle-tl.crop-mode::after  { top: 0; left: 0; width: 2.5px; height: 14px; }
+.exam-handle-tr.crop-mode::before { top: 0; right: 0; width: 14px; height: 2.5px; }
+.exam-handle-tr.crop-mode::after  { top: 0; right: 0; width: 2.5px; height: 14px; }
+.exam-handle-bl.crop-mode::before { bottom: 0; left: 0; width: 14px; height: 2.5px; }
+.exam-handle-bl.crop-mode::after  { bottom: 0; left: 0; width: 2.5px; height: 14px; }
+.exam-handle-br.crop-mode::before { bottom: 0; right: 0; width: 14px; height: 2.5px; }
+.exam-handle-br.crop-mode::after  { bottom: 0; right: 0; width: 2.5px; height: 14px; }
+/* 변 중간: 짧은 T자 (한 개 막대 + 수직) */
+.exam-handle-tm.crop-mode::before { top: 0; left: 0; width: 16px; height: 2.5px; }
+.exam-handle-tm.crop-mode::after  { top: 0; left: 50%; width: 2.5px; height: 10px; transform: translateX(-50%); }
+.exam-handle-bm.crop-mode::before { bottom: 0; left: 0; width: 16px; height: 2.5px; }
+.exam-handle-bm.crop-mode::after  { bottom: 0; left: 50%; width: 2.5px; height: 10px; transform: translateX(-50%); }
+.exam-handle-lm.crop-mode::before { left: 0; top: 0; width: 2.5px; height: 16px; }
+.exam-handle-lm.crop-mode::after  { left: 0; top: 50%; width: 10px; height: 2.5px; transform: translateY(-50%); }
+.exam-handle-rm.crop-mode::before { right: 0; top: 0; width: 2.5px; height: 16px; }
+.exam-handle-rm.crop-mode::after  { right: 0; top: 50%; width: 10px; height: 2.5px; transform: translateY(-50%); }
 
 .exam-crop-rect {
     position: absolute;

@@ -294,7 +294,7 @@ export default function ExamPreviewPage() {
             </header>
 
             <div className="bg-teal-50 border-b border-teal-100 px-6 py-2 text-center text-xs font-bold text-teal-800">
-                💡 이미지 위에 마우스 올리면 <b>파란 조절점 8개</b> 나타남 → 드래그하면 크기 조절 · <b>Shift+드래그</b>는 이미지 위에서 자르기 영역 그리기 · <b>마우스 휠</b> = 확대/축소 · <b>Ctrl+Z</b> = 취소
+                💡 이미지 hover → <b>파란 조절점 8개</b> · 조절점 드래그 = 크기 조절 (좌상단 고정) · <b>Shift 누른 채로</b> 하면 조절점이 <b>검은 자르기 마커</b>로 변신 → 그 마커 드래그하면 그 방향에서 잘림 · <b>Ctrl+Z</b> = 취소
             </div>
 
             <ExamPaper
