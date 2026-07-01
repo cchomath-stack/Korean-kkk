@@ -223,10 +223,8 @@ function SlotRender({
     const editable = !!onInlineChange;
     const imgWrapRef = React.useRef<HTMLDivElement>(null);
     const imgElRef = React.useRef<HTMLImageElement>(null);
-    const [dragMode, setDragMode] = React.useState<null | 'scale' | 'crop'>(null);
-    const [cropRect, setCropRect] = React.useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-    const [shiftHeld, setShiftHeld] = React.useState(false);
     const [natSize, setNatSize] = React.useState<{ w: number; h: number } | null>(null);
+    const [resetting, setResetting] = React.useState(false);
 
     // 캐시된 이미지는 onLoad가 안 뜰 수도 있으니 mount 시점에 즉시 체크
     React.useEffect(() => {
@@ -236,83 +234,8 @@ function SlotRender({
         }
     }, [slot.imageUrl]);
 
-    React.useEffect(() => {
-        if (!editable) return;
-        const onDown = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(true); };
-        const onUp = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false); };
-        window.addEventListener('keydown', onDown);
-        window.addEventListener('keyup', onUp);
-        return () => {
-            window.removeEventListener('keydown', onDown);
-            window.removeEventListener('keyup', onUp);
-        };
-    }, [editable]);
-
-    // Shift + 이미지 위 드래그 = 남길 영역 사각형 그리기 → 놓으면 서버에서 sharp로 실제 crop → 이미지 URL 교체
-    // mousemove 마지막 좌표는 ref에 저장 (setState 함수 안에서 side effect 피함)
-    const latestRect = React.useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-    const wrapRectRef = React.useRef<{ width: number; height: number } | null>(null);
-
-    const onImgMouseDown = (e: React.MouseEvent) => {
-        if (!editable) return;
-        if (!e.shiftKey) return;
-        e.preventDefault();
-        const wrap = imgWrapRef.current;
-        if (!wrap) return;
-        const rect = wrap.getBoundingClientRect();
-        wrapRectRef.current = { width: rect.width, height: rect.height };
-        const startX = e.clientX - rect.left;
-        const startY = e.clientY - rect.top;
-        const initial = { x1: startX, y1: startY, x2: startX, y2: startY };
-        latestRect.current = initial;
-        setDragMode('crop');
-        setCropRect(initial);
-
-        const move = (ev: MouseEvent) => {
-            const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
-            const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
-            const next = { x1: startX, y1: startY, x2: nx, y2: ny };
-            latestRect.current = next;
-            setCropRect(next);
-        };
-        const up = () => {
-            window.removeEventListener('mousemove', move);
-            window.removeEventListener('mouseup', up);
-            setDragMode(null);
-            setCropRect(null);
-
-            const cr = latestRect.current;
-            const wr = wrapRectRef.current;
-            latestRect.current = null;
-            wrapRectRef.current = null;
-            if (!cr || !wr) return;
-
-            const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
-            const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
-            if (right - left < 8 || bottom - top < 8) return;
-
-            // wrap 좌표계 사각형(0~1) → 원본 이미지 대비 절대 비율로 변환
-            const u1w = left / wr.width, u2w = right / wr.width;
-            const v1w = top / wr.height, v2w = bottom / wr.height;
-            const csL = slot.opts.cropLeft, csR = slot.opts.cropRight;
-            const csT = slot.opts.cropTop, csB = slot.opts.cropBottom;
-            const visW = Math.max(0.01, 1 - csL - csR);
-            const visH = Math.max(0.01, 1 - csT - csB);
-            const u1 = csL + u1w * visW;
-            const u2 = csL + u2w * visW;
-            const v1 = csT + v1w * visH;
-            const v2 = csT + v2w * visH;
-            // 크롭 후 화면 크기 유지: newScale = oldScale × oldVisW × (u2w - u1w)
-            // (crop 리셋 후 wrap.width = slot × newScale × 1, 이 값이 크롭 사각형의 이전 화면 폭과 같도록)
-            const newImageScale = Math.max(0.05, Math.min(4.0, slot.opts.scale * visW * (u2w - u1w)));
-            doCropAndReplace(slot.imageUrl, slot.itemId, u1, v1, u2, v2, newImageScale);
-        };
-        window.addEventListener('mousemove', move);
-        window.addEventListener('mouseup', up);
-    };
-
-    const [cropping, setCropping] = React.useState(false);
-    const [resetting, setResetting] = React.useState(false);
+    // 미리보기에서는 자르기 없음. 이미지 본체 클릭은 무동작.
+    const onImgMouseDown = (_e: React.MouseEvent) => { /* no-op */ };
 
     const resetToOriginal = async () => {
         if (!examSetId) return;
@@ -341,36 +264,8 @@ function SlotRender({
         }
     };
 
-    const doCropAndReplace = async (
-        srcUrl: string, itemId: number,
-        u1: number, v1: number, u2: number, v2: number,
-        newImageScale: number,
-    ) => {
-        if (!examSetId) {
-            alert('자르기 저장 실패: examSetId 미지정 (미리보기 페이지에서만 가능)');
-            return;
-        }
-        setCropping(true);
-        try {
-            const res = await fetch('/api/admin/exam-set/item/crop-image', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ itemId, examSetId, sourceUrl: srcUrl, u1, v1, u2, v2, newImageScale }),
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                alert(`자르기 저장 실패: ${err.detail || err.error || res.statusText}`);
-                return;
-            }
-            onInlineCommit?.(itemId);
-        } catch (e: any) {
-            alert(`자르기 실패: ${e?.message || String(e)}`);
-        } finally {
-            setCropping(false);
-        }
-    };
 
-    // 리사이즈 (Shift 없음): 좌상단 앵커, 마우스 x 위치가 새 폭 결정
+    // 리사이즈 (핸들 드래그): 좌상단 앵커, 마우스 x 위치가 새 폭 결정
     // wrap.width = slot × scale × visW 이므로 scale = newWidthPx / (slot × visW)
     const onScaleStart = (e: React.MouseEvent) => {
         if (!editable || !onInlineChange) return;
@@ -383,71 +278,26 @@ function SlotRender({
         const slotRect = slotEl.getBoundingClientRect();
         const anchorX = wrap.getBoundingClientRect().left;
         const visWStart = Math.max(0.1, 1 - slot.opts.cropLeft - slot.opts.cropRight);
-        setDragMode('scale');
 
         const move = (ev: MouseEvent) => {
             const newWidthPx = Math.max(20, ev.clientX - anchorX);
-            const nextScale = clamp(newWidthPx / (slotRect.width * visWStart), 0.3, 2.0);
+            const nextScale = clamp(newWidthPx / (slotRect.width * visWStart), 0.05, 4.0);
             onInlineChange(slot.itemId, { scale: nextScale });
         };
         const up = () => {
             window.removeEventListener('mousemove', move);
             window.removeEventListener('mouseup', up);
-            setDragMode(null);
             onInlineCommit?.(slot.itemId);
         };
         window.addEventListener('mousemove', move);
         window.addEventListener('mouseup', up);
     };
 
-    // 자르기 (Shift + 핸들 드래그): 핸들 방향의 crop 값을 조절
-    // dirX: -1 (좌측 핸들), 0 (가운데), +1 (우측 핸들)
-    // dirY: -1 (위쪽 핸들), 0 (가운데), +1 (아래쪽 핸들)
-    const onCropStart = (e: React.MouseEvent, dirX: number, dirY: number) => {
-        if (!editable || !onInlineChange) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const wrap = imgWrapRef.current;
-        if (!wrap) return;
-        const rect = wrap.getBoundingClientRect();
-        const startX = e.clientX;
-        const startY = e.clientY;
-        const startCropLeft = slot.opts.cropLeft;
-        const startCropRight = slot.opts.cropRight;
-        const startCropTop = slot.opts.cropTop;
-        const startCropBottom = slot.opts.cropBottom;
-        const visW0 = Math.max(0.05, 1 - startCropLeft - startCropRight);
-        const visH0 = Math.max(0.05, 1 - startCropTop - startCropBottom);
-        setDragMode('crop');
-
-        const move = (ev: MouseEvent) => {
-            const dx = ev.clientX - startX;
-            const dy = ev.clientY - startY;
-            const patch: any = {};
-            if (dirX === -1) {
-                // 좌측 핸들: 오른쪽으로 드래그 = cropLeft 증가
-                patch.cropLeft = clamp01(startCropLeft + (dx / rect.width) * visW0);
-            } else if (dirX === 1) {
-                // 우측 핸들: 왼쪽으로 드래그 = cropRight 증가
-                patch.cropRight = clamp01(startCropRight + (-dx / rect.width) * visW0);
-            }
-            if (dirY === -1) {
-                // 위쪽 핸들: 아래로 드래그 = cropTop 증가
-                patch.cropTop = clamp01(startCropTop + (dy / rect.height) * visH0);
-            } else if (dirY === 1) {
-                // 아래쪽 핸들: 위로 드래그 = cropBottom 증가
-                patch.cropBottom = clamp01(startCropBottom + (-dy / rect.height) * visH0);
-            }
-            onInlineChange(slot.itemId, patch);
-        };
-        const up = () => {
-            window.removeEventListener('mousemove', move);
-            window.removeEventListener('mouseup', up);
-            setDragMode(null);
-            onInlineCommit?.(slot.itemId);
-        };
-        window.addEventListener('mousemove', move);
-        window.addEventListener('mouseup', up);
+    // 정렬 변경 (좌/중/우)
+    const setAlign = (a: 'left' | 'center' | 'right') => {
+        if (!onInlineChange) return;
+        onInlineChange(slot.itemId, { align: a });
+        onInlineCommit?.(slot.itemId);
     };
 
     const onImgWheel = (e: React.WheelEvent) => {
@@ -481,7 +331,7 @@ function SlotRender({
         width: `${wrapWidthPct}%`,
         position: 'relative',
         ...(noCrop ? {} : { overflow: 'hidden' }),
-        ...(editable ? { cursor: shiftHeld ? 'crosshair' : 'default' } : {}),
+        ...(editable ? { cursor: 'default' } : {}),
     };
     if (natSize) {
         wrapStyle.aspectRatio = `${natSize.w * visW} / ${natSize.h * visH}`;
@@ -502,7 +352,7 @@ function SlotRender({
         };
 
     return (
-        <div className={`exam-slot-inner ${editable ? 'editable' : ''} ${shiftHeld ? 'shift-held' : ''}`} style={{ alignItems }}>
+        <div className={`exam-slot-inner ${editable ? 'editable' : ''}`} style={{ alignItems }}>
             {slot.sectionLabel && (
                 <div className="exam-section-row" style={{ alignSelf: 'stretch' }}>
                     <span className="exam-section-tag">{slot.sectionLabel}</span>
@@ -536,26 +386,30 @@ function SlotRender({
                         }
                     }}
                 />
-                {editable && <EditHandles shiftHeld={shiftHeld} onScaleStart={onScaleStart} onCropStart={onCropStart} />}
-                {dragMode === 'crop' && cropRect && (
-                    <div
-                        className="exam-crop-rect"
-                        style={{
-                            left: Math.min(cropRect.x1, cropRect.x2),
-                            top: Math.min(cropRect.y1, cropRect.y2),
-                            width: Math.abs(cropRect.x2 - cropRect.x1),
-                            height: Math.abs(cropRect.y2 - cropRect.y1),
-                        }}
-                    >
-                        <span className="exam-crop-rect-label">이 영역만 남깁니다</span>
-                    </div>
-                )}
-                {cropping && (
-                    <div className="exam-crop-loading">
-                        <div className="exam-crop-loading-inner">자르는 중...</div>
-                    </div>
-                )}
+                {editable && <EditHandles onScaleStart={onScaleStart} />}
             </div>
+            {editable && (
+                <div className="exam-align-toolbar">
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setAlign('left'); }}
+                        className={`exam-align-btn ${slot.opts.align === 'left' ? 'active' : ''}`}
+                        title="왼쪽"
+                    >⇤</button>
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setAlign('center'); }}
+                        className={`exam-align-btn ${slot.opts.align === 'center' ? 'active' : ''}`}
+                        title="가운데"
+                    >⇔</button>
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setAlign('right'); }}
+                        className={`exam-align-btn ${slot.opts.align === 'right' ? 'active' : ''}`}
+                        title="오른쪽"
+                    >⇥</button>
+                </div>
+            )}
             {onAdjustItem && !editable && (
                 <button
                     type="button"
@@ -592,22 +446,14 @@ const HANDLE_DEFS: { pos: string; dirX: number; dirY: number }[] = [
     { pos: 'rm', dirX: 1, dirY: 0 },
 ];
 
-function EditHandles({
-    shiftHeld, onScaleStart, onCropStart,
-}: {
-    shiftHeld: boolean;
-    onScaleStart: (e: React.MouseEvent) => void;
-    onCropStart: (e: React.MouseEvent, dirX: number, dirY: number) => void;
-}) {
+function EditHandles({ onScaleStart }: { onScaleStart: (e: React.MouseEvent) => void }) {
     return (
         <>
             {HANDLE_DEFS.map(h => (
                 <div
                     key={h.pos}
-                    className={`exam-handle exam-handle-${h.pos} ${shiftHeld ? 'crop-mode' : ''}`}
-                    // shiftHeld state 대신 실제 mousedown 이벤트의 shiftKey를 사용 —
-                    // 상태 반영 타이밍보다 안전.
-                    onMouseDown={(e) => e.shiftKey ? onCropStart(e, h.dirX, h.dirY) : onScaleStart(e)}
+                    className={`exam-handle exam-handle-${h.pos}`}
+                    onMouseDown={onScaleStart}
                 />
             ))}
         </>
@@ -616,10 +462,6 @@ function EditHandles({
 
 function clamp(v: number, lo: number, hi: number): number {
     return Math.max(lo, Math.min(hi, v));
-}
-function clamp01(v: number): number {
-    if (!isFinite(v)) return 0;
-    return Math.max(0, Math.min(0.45, v));
 }
 
 
@@ -1040,6 +882,38 @@ const EXAM_PAPER_CSS = `
 }
 .exam-slot-inner:hover .exam-adjust-btn { opacity: 1; }
 .exam-adjust-btn:hover { background: rgba(15,118,110,1); }
+
+/* 정렬 툴바 (편집 모드, 슬롯 hover 시) */
+.exam-align-toolbar {
+    position: absolute;
+    top: 2mm;
+    right: 2mm;
+    z-index: 25;
+    display: flex;
+    gap: 2px;
+    background: rgba(15, 23, 42, 0.9);
+    padding: 3px;
+    border-radius: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.exam-slot-inner.editable:hover .exam-align-toolbar { opacity: 1; }
+.exam-align-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    font-size: 13pt;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 700;
+    font-family: monospace;
+}
+.exam-align-btn:hover { background: rgba(255,255,255,0.15); color: white; }
+.exam-align-btn.active { background: #0d9488; color: white; }
+@media print { .exam-align-toolbar { display: none !important; } }
 
 /* 원본 복구 버튼 (편집 모드에서만) */
 .exam-reset-btn {

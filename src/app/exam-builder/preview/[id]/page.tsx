@@ -294,7 +294,7 @@ export default function ExamPreviewPage() {
             </header>
 
             <div className="bg-teal-50 border-b border-teal-100 px-6 py-2 text-center text-xs font-bold text-teal-800">
-                💡 파란 조절점 드래그 = <b>이미지 크기 조절</b> · <b>Shift+드래그 = 그린 영역만 남기기</b> · <b>Ctrl+Z</b> = 취소 · 이미지 hover 시 좌측 상단 <b className="text-rose-600">[↺ 원본으로]</b> 버튼으로 잘못된 편집 되돌리기
+                💡 여기서는 <b>크기·위치</b>만 조정합니다. 파란 조절점 드래그 = 크기 · 우측 상단 <b>[⇤ ⇔ ⇥]</b> = 위치 · <b>Ctrl+Z</b> = 취소 · 자르기는 <b>[✏️ 이미지 조정]</b> 모달에서.
             </div>
 
             <ExamPaper
