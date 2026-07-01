@@ -294,7 +294,7 @@ export default function ExamPreviewPage() {
             </header>
 
             <div className="bg-teal-50 border-b border-teal-100 px-6 py-2 text-center text-xs font-bold text-teal-800">
-                💡 파란 조절점 드래그 = <b>이미지 크기 조절</b> (좌상단 고정) · <b>Shift + 이미지 위에서 드래그</b> = 남길 영역을 사각형으로 그림 → 놓으면 그 영역만 남고 나머지는 잘림 · <b>Ctrl+Z</b> = 취소
+                💡 파란 조절점 드래그 = <b>이미지 크기 조절</b> · <b>Shift 누르면 조절점이 검은 자르기 마커로 변신</b> → 그 마커를 이미지 안쪽으로 드래그하면 그 방향에서 잘림 (예: 우측 마커 좌로 드래그 = 우측만 잘림) · <b>Ctrl+Z</b> = 취소
             </div>
 
             <ExamPaper
