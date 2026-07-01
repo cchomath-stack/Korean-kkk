@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     const ownerId = Number(session.userId);
     try {
         const body = await request.json();
-        const { itemId, examSetId, sourceUrl, u1, v1, u2, v2 } = body || {};
+        const { itemId, examSetId, sourceUrl, u1, v1, u2, v2, newImageScale } = body || {};
         if (!itemId || !examSetId || !sourceUrl) {
             return NextResponse.json({ error: 'itemId/examSetId/sourceUrl 필요.' }, { status: 400 });
         }
@@ -67,12 +67,17 @@ export async function POST(request: NextRequest) {
             contentType: 'image/png',
         });
 
+        const dataUpdate: any = {
+            croppedImageUrl: blob.url,
+            cropTop: 0, cropBottom: 0, cropLeft: 0, cropRight: 0,
+        };
+        // 크롭 후 화면 크기가 이전과 동일하게 유지되도록 imageScale 자동 조정
+        if (typeof newImageScale === 'number' && isFinite(newImageScale)) {
+            dataUpdate.imageScale = Math.max(0.05, Math.min(4.0, newImageScale));
+        }
         const updated = await prisma.examItem.update({
             where: { id: item.id },
-            data: {
-                croppedImageUrl: blob.url,
-                cropTop: 0, cropBottom: 0, cropLeft: 0, cropRight: 0,
-            },
+            data: dataUpdate,
         });
 
         return NextResponse.json({ item: updated, url: blob.url });

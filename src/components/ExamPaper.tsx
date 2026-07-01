@@ -291,12 +291,9 @@ function SlotRender({
             const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
             if (right - left < 8 || bottom - top < 8) return;
 
-            // wrap 좌표계 사각형(0~1) → 현재 slot.opts.crop을 반영해서 원본 이미지 대비 절대 비율로 변환
+            // wrap 좌표계 사각형(0~1) → 원본 이미지 대비 절대 비율로 변환
             const u1w = left / wr.width, u2w = right / wr.width;
             const v1w = top / wr.height, v2w = bottom / wr.height;
-            // 만약 croppedImageUrl 사용 중이면 sourceUrl은 croppedImageUrl. slot.imageUrl이 곧 그것.
-            // 그리고 croppedImageUrl 사용 시 cropL/T/R/B = 0 이므로 wrap 좌표 = 원본 좌표.
-            // CSS crop 잔여값이 있는 경우 (legacy) 정확 계산 필요.
             const csL = slot.opts.cropLeft, csR = slot.opts.cropRight;
             const csT = slot.opts.cropTop, csB = slot.opts.cropBottom;
             const visW = Math.max(0.01, 1 - csL - csR);
@@ -305,14 +302,21 @@ function SlotRender({
             const u2 = csL + u2w * visW;
             const v1 = csT + v1w * visH;
             const v2 = csT + v2w * visH;
-            doCropAndReplace(slot.imageUrl, slot.itemId, u1, v1, u2, v2);
+            // 크롭 후 화면 크기 유지: newScale = oldScale × oldVisW × (u2w - u1w)
+            // (crop 리셋 후 wrap.width = slot × newScale × 1, 이 값이 크롭 사각형의 이전 화면 폭과 같도록)
+            const newImageScale = Math.max(0.05, Math.min(4.0, slot.opts.scale * visW * (u2w - u1w)));
+            doCropAndReplace(slot.imageUrl, slot.itemId, u1, v1, u2, v2, newImageScale);
         };
         window.addEventListener('mousemove', move);
         window.addEventListener('mouseup', up);
     };
 
     const [cropping, setCropping] = React.useState(false);
-    const doCropAndReplace = async (srcUrl: string, itemId: number, u1: number, v1: number, u2: number, v2: number) => {
+    const doCropAndReplace = async (
+        srcUrl: string, itemId: number,
+        u1: number, v1: number, u2: number, v2: number,
+        newImageScale: number,
+    ) => {
         if (!examSetId) {
             alert('자르기 저장 실패: examSetId 미지정 (미리보기 페이지에서만 가능)');
             return;
@@ -322,7 +326,7 @@ function SlotRender({
             const res = await fetch('/api/admin/exam-set/item/crop-image', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ itemId, examSetId, sourceUrl: srcUrl, u1, v1, u2, v2 }),
+                body: JSON.stringify({ itemId, examSetId, sourceUrl: srcUrl, u1, v1, u2, v2, newImageScale }),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
