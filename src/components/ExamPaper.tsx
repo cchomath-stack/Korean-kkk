@@ -210,10 +210,19 @@ function SlotRender({
 }) {
     const editable = !!onInlineChange;
     const imgWrapRef = React.useRef<HTMLDivElement>(null);
+    const imgElRef = React.useRef<HTMLImageElement>(null);
     const [dragMode, setDragMode] = React.useState<null | 'scale' | 'crop'>(null);
     const [cropRect, setCropRect] = React.useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const [shiftHeld, setShiftHeld] = React.useState(false);
     const [natSize, setNatSize] = React.useState<{ w: number; h: number } | null>(null);
+
+    // 캐시된 이미지는 onLoad가 안 뜰 수도 있으니 mount 시점에 즉시 체크
+    React.useEffect(() => {
+        const el = imgElRef.current;
+        if (el && el.complete && el.naturalWidth > 0) {
+            setNatSize({ w: el.naturalWidth, h: el.naturalHeight });
+        }
+    }, [slot.imageUrl]);
 
     React.useEffect(() => {
         if (!editable) return;
@@ -233,6 +242,7 @@ function SlotRender({
     };
 
     // 리사이즈 (Shift 없음): 좌상단 앵커, 마우스 x 위치가 새 폭 결정
+    // wrap.width = slot × scale × visW 이므로 scale = newWidthPx / (slot × visW)
     const onScaleStart = (e: React.MouseEvent) => {
         if (!editable || !onInlineChange) return;
         e.preventDefault();
@@ -243,11 +253,12 @@ function SlotRender({
         if (!slotEl) return;
         const slotRect = slotEl.getBoundingClientRect();
         const anchorX = wrap.getBoundingClientRect().left;
+        const visWStart = Math.max(0.1, 1 - slot.opts.cropLeft - slot.opts.cropRight);
         setDragMode('scale');
 
         const move = (ev: MouseEvent) => {
             const newWidthPx = Math.max(20, ev.clientX - anchorX);
-            const nextScale = clamp(newWidthPx / slotRect.width, 0.3, 2.0);
+            const nextScale = clamp(newWidthPx / (slotRect.width * visWStart), 0.3, 2.0);
             onInlineChange(slot.itemId, { scale: nextScale });
         };
         const up = () => {
@@ -333,10 +344,12 @@ function SlotRender({
 
     const isPassage = slot.type === 'passage';
 
-    // wrap의 최종 폭/세로 비율은 원본 이미지 비율(natW/natH)에 crop 비율을 곱한 값이어야 정확.
-    // natSize가 아직 없으면 기본은 자연 비율(no aspect-ratio) 또는 crop만 반영(visW/visH — 근사).
+    // wrap.width = slot × scale × visW — crop 이 반영된 실제 화면 폭.
+    // 원본 크기 (scale=1, no crop)에서 slot 100% 이었다면, cropRight 10% 시 wrap 폭은 slot 90% 로 축소.
+    // wrap.height는 aspectRatio로 자동 계산 — 원본 이미지 비율(natW/natH)에 crop 비율 곱함.
+    const wrapWidthPct = Math.round(widthPct * visW);
     const wrapStyle: React.CSSProperties = {
-        width: `${widthPct}%`,
+        width: `${wrapWidthPct}%`,
         position: 'relative',
         ...(noCrop ? {} : { overflow: 'hidden' }),
         ...(editable ? { cursor: shiftHeld ? 'crosshair' : 'default' } : {}),
@@ -382,6 +395,7 @@ function SlotRender({
                 onWheel={editable ? onImgWheel : undefined}
             >
                 <img
+                    ref={imgElRef}
                     src={slot.imageUrl}
                     alt={isPassage ? 'passage' : `q-${slot.displayNo}`}
                     style={imgStyle}
