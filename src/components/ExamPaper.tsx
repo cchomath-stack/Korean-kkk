@@ -215,75 +215,79 @@ function SlotRender({
 
     const onImgMouseDown = (e: React.MouseEvent) => {
         if (!editable) return;
+        if (!e.shiftKey) return; // 이미지 본체 드래그는 Shift일 때만 (자르기)
         e.preventDefault();
         const wrap = imgWrapRef.current;
         if (!wrap) return;
         const rect = wrap.getBoundingClientRect();
 
-        if (e.shiftKey) {
-            // 자르기 사각형 그리기
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            setDragMode('crop');
-            setCropRect({ x1: x, y1: y, x2: x, y2: y });
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        setDragMode('crop');
+        setCropRect({ x1: x, y1: y, x2: x, y2: y });
 
-            const move = (ev: MouseEvent) => {
-                const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
-                const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
-                setCropRect(prev => prev ? { ...prev, x2: nx, y2: ny } : null);
-            };
-            const up = () => {
-                window.removeEventListener('mousemove', move);
-                window.removeEventListener('mouseup', up);
-                setDragMode(null);
-                setCropRect(cr => {
-                    if (!cr || !onInlineChange) return null;
-                    const w = rect.width, h = rect.height;
-                    const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
-                    const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
-                    // 너무 작으면 무시
-                    if (right - left < 8 || bottom - top < 8) return null;
-                    // 슬롯 내부의 그린 사각형 (u,v: 0~1) → 현재 자르기 영역 안의 상대 좌표
-                    const u1 = left / w, u2 = right / w, v1 = top / h, v2 = bottom / h;
-                    // 현재 자르기 이미 반영된 상태에서, 슬롯이 visible 영역을 보여줌.
-                    // 새 자르기 = 현재 자르기 + 상대 사각형
-                    const visW = 1 - slot.opts.cropLeft - slot.opts.cropRight;
-                    const visH = 1 - slot.opts.cropTop - slot.opts.cropBottom;
-                    const newCropLeft = clamp01(slot.opts.cropLeft + u1 * visW);
-                    const newCropRight = clamp01(slot.opts.cropRight + (1 - u2) * visW);
-                    const newCropTop = clamp01(slot.opts.cropTop + v1 * visH);
-                    const newCropBottom = clamp01(slot.opts.cropBottom + (1 - v2) * visH);
-                    onInlineChange(slot.itemId, {
-                        cropTop: newCropTop, cropBottom: newCropBottom,
-                        cropLeft: newCropLeft, cropRight: newCropRight,
-                    });
-                    onInlineCommit?.(slot.itemId);
-                    return null;
+        const move = (ev: MouseEvent) => {
+            const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+            const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+            setCropRect(prev => prev ? { ...prev, x2: nx, y2: ny } : null);
+        };
+        const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            setDragMode(null);
+            setCropRect(cr => {
+                if (!cr || !onInlineChange) return null;
+                const w = rect.width, h = rect.height;
+                const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
+                const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
+                if (right - left < 8 || bottom - top < 8) return null;
+                const u1 = left / w, u2 = right / w, v1 = top / h, v2 = bottom / h;
+                const visW = 1 - slot.opts.cropLeft - slot.opts.cropRight;
+                const visH = 1 - slot.opts.cropTop - slot.opts.cropBottom;
+                const newCropLeft = clamp01(slot.opts.cropLeft + u1 * visW);
+                const newCropRight = clamp01(slot.opts.cropRight + (1 - u2) * visW);
+                const newCropTop = clamp01(slot.opts.cropTop + v1 * visH);
+                const newCropBottom = clamp01(slot.opts.cropBottom + (1 - v2) * visH);
+                onInlineChange(slot.itemId, {
+                    cropTop: newCropTop, cropBottom: newCropBottom,
+                    cropLeft: newCropLeft, cropRight: newCropRight,
                 });
-            };
-            window.addEventListener('mousemove', move);
-            window.addEventListener('mouseup', up);
-        } else {
-            // 스케일 조절 (세로 드래그: 위로 = 커짐, 아래로 = 작아짐)
-            const startY = e.clientY;
-            const startScale = slot.opts.scale;
-            setDragMode('scale');
-
-            const move = (ev: MouseEvent) => {
-                const dy = ev.clientY - startY; // 양수 = 아래로 이동 = 축소
-                const factor = 1 - dy / 200; // 200px = 100% 변화
-                const nextScale = clamp(startScale * factor, 0.3, 2.0);
-                onInlineChange?.(slot.itemId, { scale: nextScale });
-            };
-            const up = () => {
-                window.removeEventListener('mousemove', move);
-                window.removeEventListener('mouseup', up);
-                setDragMode(null);
                 onInlineCommit?.(slot.itemId);
-            };
-            window.addEventListener('mousemove', move);
-            window.addEventListener('mouseup', up);
-        }
+                return null;
+            });
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    };
+
+    // 코너 핸들 드래그: 이미지 중심 기준 마우스 거리 비율로 스케일 조절 (한글식 리사이즈)
+    const onHandleMouseDown = (e: React.MouseEvent) => {
+        if (!editable || !onInlineChange) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wrap = imgWrapRef.current;
+        if (!wrap) return;
+        const rect = wrap.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const startDist = Math.max(1, Math.hypot(e.clientX - cx, e.clientY - cy));
+        const startScale = slot.opts.scale;
+        setDragMode('scale');
+
+        const move = (ev: MouseEvent) => {
+            const d = Math.hypot(ev.clientX - cx, ev.clientY - cy);
+            const factor = d / startDist;
+            const next = clamp(startScale * factor, 0.3, 2.0);
+            onInlineChange(slot.itemId, { scale: next });
+        };
+        const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            setDragMode(null);
+            onInlineCommit?.(slot.itemId);
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
     };
 
     const onImgWheel = (e: React.WheelEvent) => {
@@ -312,6 +316,7 @@ function SlotRender({
                     onWheel={editable ? onImgWheel : undefined}
                 >
                     <ImgWithOpts src={slot.imageUrl} alt="passage" opts={slot.opts} />
+                    {editable && <EditHandles onMouseDown={onHandleMouseDown} />}
                     {dragMode === 'crop' && cropRect && (
                         <div
                             className="exam-crop-rect"
@@ -339,6 +344,7 @@ function SlotRender({
                         onWheel={editable ? onImgWheel : undefined}
                     >
                         <ImgWithOpts src={slot.imageUrl} alt={`q-${slot.displayNo}`} opts={slot.opts} />
+                        {editable && <EditHandles onMouseDown={onHandleMouseDown} />}
                         {dragMode === 'crop' && cropRect && (
                             <div
                                 className="exam-crop-rect"
@@ -364,6 +370,21 @@ function SlotRender({
                 </button>
             )}
         </div>
+    );
+}
+
+function EditHandles({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+    return (
+        <>
+            <div className="exam-handle exam-handle-tl" onMouseDown={onMouseDown} />
+            <div className="exam-handle exam-handle-tr" onMouseDown={onMouseDown} />
+            <div className="exam-handle exam-handle-bl" onMouseDown={onMouseDown} />
+            <div className="exam-handle exam-handle-br" onMouseDown={onMouseDown} />
+            <div className="exam-handle exam-handle-tm" onMouseDown={onMouseDown} />
+            <div className="exam-handle exam-handle-bm" onMouseDown={onMouseDown} />
+            <div className="exam-handle exam-handle-lm" onMouseDown={onMouseDown} />
+            <div className="exam-handle exam-handle-rm" onMouseDown={onMouseDown} />
+        </>
     );
 }
 
@@ -644,22 +665,45 @@ const EXAM_PAPER_CSS = `
     text-align: right;
 }
 
-/* 인라인 편집 모드 시각 표시 */
+/* 인라인 편집 모드 시각 표시 (한글 그림 편집 스타일) */
 .exam-editable-img {
     position: relative;
-    cursor: ns-resize;
     user-select: none;
     transition: outline 0.15s;
-    outline: 2px dashed transparent;
+    outline: 1.5px solid transparent;
     outline-offset: 2px;
 }
+.exam-slot-inner.editable .exam-editable-img { cursor: default; }
 .exam-slot-inner.editable .exam-editable-img:hover {
-    outline: 2px dashed rgba(13,148,136,0.55);
+    outline: 1.5px solid rgba(59,130,246,0.5);
 }
-.exam-slot-inner.editable .exam-editable-img:active {
-    outline: 2px solid rgba(13,148,136,0.9);
-    cursor: grabbing;
+
+/* 8방향 핸들 (한글식 파란 사각점) */
+.exam-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #2563eb;
+    border: 1.5px solid white;
+    box-shadow: 0 0 3px rgba(0,0,0,0.35);
+    opacity: 0;
+    transition: opacity 0.15s, transform 0.1s;
+    z-index: 15;
 }
+.exam-slot-inner.editable .exam-editable-img:hover .exam-handle,
+.exam-slot-inner.editable .exam-editable-img:active .exam-handle {
+    opacity: 1;
+}
+.exam-handle:hover { transform: scale(1.3) translate(var(--tx, 0), var(--ty, 0)); }
+.exam-handle-tl { left: 0; top: 0; transform: translate(-50%, -50%); cursor: nwse-resize; }
+.exam-handle-tr { right: 0; top: 0; transform: translate(50%, -50%); cursor: nesw-resize; }
+.exam-handle-bl { left: 0; bottom: 0; transform: translate(-50%, 50%); cursor: nesw-resize; }
+.exam-handle-br { right: 0; bottom: 0; transform: translate(50%, 50%); cursor: nwse-resize; }
+.exam-handle-tm { left: 50%; top: 0; transform: translate(-50%, -50%); cursor: ns-resize; }
+.exam-handle-bm { left: 50%; bottom: 0; transform: translate(-50%, 50%); cursor: ns-resize; }
+.exam-handle-lm { left: 0; top: 50%; transform: translate(-50%, -50%); cursor: ew-resize; }
+.exam-handle-rm { right: 0; top: 50%; transform: translate(50%, -50%); cursor: ew-resize; }
+
 .exam-crop-rect {
     position: absolute;
     border: 2px dashed #0d9488;

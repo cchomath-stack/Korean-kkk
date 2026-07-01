@@ -294,7 +294,7 @@ export default function ExamPreviewPage() {
             </header>
 
             <div className="bg-teal-50 border-b border-teal-100 px-6 py-2 text-center text-xs font-bold text-teal-800">
-                💡 이미지 위에서 <b>드래그</b> = 크기 조절 (아래로 = 축소, 위로 = 확대) · <b>Shift+드래그</b> = 자르기 영역 그리기 · <b>마우스 휠</b> = 확대/축소 · <b>Ctrl+Z</b> = 취소
+                💡 이미지 위에 마우스 올리면 <b>파란 조절점 8개</b> 나타남 → 드래그하면 크기 조절 · <b>Shift+드래그</b>는 이미지 위에서 자르기 영역 그리기 · <b>마우스 휠</b> = 확대/축소 · <b>Ctrl+Z</b> = 취소
             </div>
 
             <ExamPaper
