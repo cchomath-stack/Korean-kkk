@@ -213,6 +213,7 @@ function SlotRender({
     const [dragMode, setDragMode] = React.useState<null | 'scale' | 'crop'>(null);
     const [cropRect, setCropRect] = React.useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const [shiftHeld, setShiftHeld] = React.useState(false);
+    const [natSize, setNatSize] = React.useState<{ w: number; h: number } | null>(null);
 
     React.useEffect(() => {
         if (!editable) return;
@@ -332,12 +333,19 @@ function SlotRender({
 
     const isPassage = slot.type === 'passage';
 
+    // wrap의 최종 폭/세로 비율은 원본 이미지 비율(natW/natH)에 crop 비율을 곱한 값이어야 정확.
+    // natSize가 아직 없으면 기본은 자연 비율(no aspect-ratio) 또는 crop만 반영(visW/visH — 근사).
     const wrapStyle: React.CSSProperties = {
         width: `${widthPct}%`,
         position: 'relative',
-        ...(noCrop ? {} : { aspectRatio: `${visW} / ${visH}`, overflow: 'hidden' }),
+        ...(noCrop ? {} : { overflow: 'hidden' }),
         ...(editable ? { cursor: shiftHeld ? 'crosshair' : 'default' } : {}),
     };
+    if (natSize) {
+        wrapStyle.aspectRatio = `${natSize.w * visW} / ${natSize.h * visH}`;
+    } else if (!noCrop) {
+        wrapStyle.aspectRatio = `${visW} / ${visH}`;
+    }
     const imgStyle: React.CSSProperties = noCrop
         ? { width: '100%', height: 'auto', display: 'block', pointerEvents: 'none', userSelect: 'none' }
         : {
@@ -352,7 +360,7 @@ function SlotRender({
         };
 
     return (
-        <div className={`exam-slot-inner ${editable ? 'editable' : ''}`} style={{ alignItems }}>
+        <div className={`exam-slot-inner ${editable ? 'editable' : ''} ${shiftHeld ? 'shift-held' : ''}`} style={{ alignItems }}>
             {slot.sectionLabel && (
                 <div className="exam-section-row" style={{ alignSelf: 'stretch' }}>
                     <span className="exam-section-tag">{slot.sectionLabel}</span>
@@ -373,7 +381,18 @@ function SlotRender({
                 onMouseDown={editable ? onImgMouseDown : undefined}
                 onWheel={editable ? onImgWheel : undefined}
             >
-                <img src={slot.imageUrl} alt={isPassage ? 'passage' : `q-${slot.displayNo}`} style={imgStyle} draggable={false} />
+                <img
+                    src={slot.imageUrl}
+                    alt={isPassage ? 'passage' : `q-${slot.displayNo}`}
+                    style={imgStyle}
+                    draggable={false}
+                    onLoad={(e) => {
+                        const el = e.currentTarget;
+                        if (el.naturalWidth > 0 && el.naturalHeight > 0) {
+                            setNatSize({ w: el.naturalWidth, h: el.naturalHeight });
+                        }
+                    }}
+                />
                 {editable && <EditHandles shiftHeld={shiftHeld} onScaleStart={onScaleStart} onCropStart={onCropStart} />}
                 {dragMode === 'crop' && cropRect && (
                     <div
@@ -742,6 +761,10 @@ const EXAM_PAPER_CSS = `
 .exam-slot-inner.editable .exam-editable-img:active .exam-handle {
     opacity: 1;
 }
+/* Shift 눌린 상태에서는 hover 없이도 항상 마커 노출 */
+.exam-slot-inner.editable.shift-held .exam-handle {
+    opacity: 1;
+}
 .exam-handle-tl { left: 0; top: 0; transform: translate(-50%, -50%); cursor: nwse-resize; }
 .exam-handle-tr { right: 0; top: 0; transform: translate(50%, -50%); cursor: nesw-resize; }
 .exam-handle-bl { left: 0; bottom: 0; transform: translate(-50%, 50%); cursor: nesw-resize; }
@@ -751,38 +774,40 @@ const EXAM_PAPER_CSS = `
 .exam-handle-lm { left: 0; top: 50%; transform: translate(-50%, -50%); cursor: ew-resize; }
 .exam-handle-rm { right: 0; top: 50%; transform: translate(50%, -50%); cursor: ew-resize; }
 
-/* Shift 눌린 상태 — 자르기 마커 (검은 L/T 모양) */
+/* Shift 눌린 상태 — 자르기 마커 (검은 L/T 모양, 크게) */
 .exam-handle.crop-mode {
     background: transparent;
     border: none;
     box-shadow: none;
-    width: 16px;
-    height: 16px;
+    width: 22px;
+    height: 22px;
+    cursor: crosshair;
 }
 .exam-handle.crop-mode::before,
 .exam-handle.crop-mode::after {
     content: '';
     position: absolute;
-    background: #0f172a;
+    background: #000;
+    box-shadow: 0 0 2px rgba(255,255,255,0.9);
 }
-/* 코너: L자 (수평 + 수직 막대) */
-.exam-handle-tl.crop-mode::before { top: 0; left: 0; width: 14px; height: 2.5px; }
-.exam-handle-tl.crop-mode::after  { top: 0; left: 0; width: 2.5px; height: 14px; }
-.exam-handle-tr.crop-mode::before { top: 0; right: 0; width: 14px; height: 2.5px; }
-.exam-handle-tr.crop-mode::after  { top: 0; right: 0; width: 2.5px; height: 14px; }
-.exam-handle-bl.crop-mode::before { bottom: 0; left: 0; width: 14px; height: 2.5px; }
-.exam-handle-bl.crop-mode::after  { bottom: 0; left: 0; width: 2.5px; height: 14px; }
-.exam-handle-br.crop-mode::before { bottom: 0; right: 0; width: 14px; height: 2.5px; }
-.exam-handle-br.crop-mode::after  { bottom: 0; right: 0; width: 2.5px; height: 14px; }
-/* 변 중간: 짧은 T자 (한 개 막대 + 수직) */
-.exam-handle-tm.crop-mode::before { top: 0; left: 0; width: 16px; height: 2.5px; }
-.exam-handle-tm.crop-mode::after  { top: 0; left: 50%; width: 2.5px; height: 10px; transform: translateX(-50%); }
-.exam-handle-bm.crop-mode::before { bottom: 0; left: 0; width: 16px; height: 2.5px; }
-.exam-handle-bm.crop-mode::after  { bottom: 0; left: 50%; width: 2.5px; height: 10px; transform: translateX(-50%); }
-.exam-handle-lm.crop-mode::before { left: 0; top: 0; width: 2.5px; height: 16px; }
-.exam-handle-lm.crop-mode::after  { left: 0; top: 50%; width: 10px; height: 2.5px; transform: translateY(-50%); }
-.exam-handle-rm.crop-mode::before { right: 0; top: 0; width: 2.5px; height: 16px; }
-.exam-handle-rm.crop-mode::after  { right: 0; top: 50%; width: 10px; height: 2.5px; transform: translateY(-50%); }
+/* 코너: 두꺼운 L자 (수평 + 수직 막대) */
+.exam-handle-tl.crop-mode::before { top: 0; left: 0; width: 20px; height: 4px; }
+.exam-handle-tl.crop-mode::after  { top: 0; left: 0; width: 4px; height: 20px; }
+.exam-handle-tr.crop-mode::before { top: 0; right: 0; width: 20px; height: 4px; }
+.exam-handle-tr.crop-mode::after  { top: 0; right: 0; width: 4px; height: 20px; }
+.exam-handle-bl.crop-mode::before { bottom: 0; left: 0; width: 20px; height: 4px; }
+.exam-handle-bl.crop-mode::after  { bottom: 0; left: 0; width: 4px; height: 20px; }
+.exam-handle-br.crop-mode::before { bottom: 0; right: 0; width: 20px; height: 4px; }
+.exam-handle-br.crop-mode::after  { bottom: 0; right: 0; width: 4px; height: 20px; }
+/* 변 중간: 두꺼운 T자 */
+.exam-handle-tm.crop-mode::before { top: 0; left: 50%; width: 22px; height: 4px; transform: translateX(-50%); }
+.exam-handle-tm.crop-mode::after  { top: 0; left: 50%; width: 4px; height: 14px; transform: translateX(-50%); }
+.exam-handle-bm.crop-mode::before { bottom: 0; left: 50%; width: 22px; height: 4px; transform: translateX(-50%); }
+.exam-handle-bm.crop-mode::after  { bottom: 0; left: 50%; width: 4px; height: 14px; transform: translateX(-50%); }
+.exam-handle-lm.crop-mode::before { left: 0; top: 50%; width: 4px; height: 22px; transform: translateY(-50%); }
+.exam-handle-lm.crop-mode::after  { left: 0; top: 50%; width: 14px; height: 4px; transform: translateY(-50%); }
+.exam-handle-rm.crop-mode::before { right: 0; top: 50%; width: 4px; height: 22px; transform: translateY(-50%); }
+.exam-handle-rm.crop-mode::after  { right: 0; top: 50%; width: 14px; height: 4px; transform: translateY(-50%); }
 
 .exam-crop-rect {
     position: absolute;
