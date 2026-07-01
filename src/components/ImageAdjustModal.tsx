@@ -27,8 +27,8 @@ function getInitialImgUrl(item: AdjustableItem): string | null {
 }
 
 // exam-builder 카드 → [이미지 조정] 버튼 → 이 모달.
-// 이미지 위에 드래그로 사각형을 그리면 그 영역만 남기고 서버가 실제 파일을 잘라 교체함.
-// 크기(단 대비 %) · 정렬은 별도 슬라이더/버튼으로 저장 시 커밋.
+// 이미지 위에 드래그로 사각형 → 그 영역만 남기고 서버가 실제 파일을 잘라 교체 (즉시 저장).
+// 크기·정렬은 슬라이더/토글 조작 시 500ms debounce 후 자동 저장.
 export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
     item: AdjustableItem;
     examSetId: number;
@@ -38,11 +38,10 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
     const [imgUrl, setImgUrl] = useState<string | null>(getInitialImgUrl(item));
     const [scale, setScale] = useState(item.imageScale ?? 1.0);
     const [align, setAlign] = useState<'left' | 'center' | 'right'>((item.imageAlign as any) ?? 'center');
-    const [saving, setSaving] = useState(false);
     const [cropping, setCropping] = useState(false);
     const [resetting, setResetting] = useState(false);
+    const [savingMeta, setSavingMeta] = useState(false);
 
-    // 드래그 상태
     const wrapRef = useRef<HTMLDivElement>(null);
     const latestRect = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const wrapSize = useRef<{ w: number; h: number } | null>(null);
@@ -53,6 +52,37 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
         setScale(item.imageScale ?? 1.0);
         setAlign((item.imageAlign as any) ?? 'center');
     }, [item.id, item.croppedImageUrl]);
+
+    // 크기·정렬 자동 저장 (debounced)
+    const saveMetaTimer = useRef<any>(null);
+    const scheduleMetaSave = (nextScale: number, nextAlign: 'left' | 'center' | 'right') => {
+        if (saveMetaTimer.current) clearTimeout(saveMetaTimer.current);
+        saveMetaTimer.current = setTimeout(async () => {
+            setSavingMeta(true);
+            try {
+                await fetch('/api/admin/exam-set/item', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        examSetId,
+                        items: [{ id: item.id, imageScale: nextScale, imageAlign: nextAlign }],
+                    }),
+                });
+                onSaved();
+            } finally {
+                setSavingMeta(false);
+            }
+        }, 500);
+    };
+
+    const onScaleChange = (v: number) => {
+        setScale(v);
+        scheduleMetaSave(v, align);
+    };
+    const onAlignChange = (a: 'left' | 'center' | 'right') => {
+        setAlign(a);
+        scheduleMetaSave(scale, a);
+    };
 
     const onMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -88,20 +118,22 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
 
             const u1 = left / wr.w, u2 = right / wr.w;
             const v1 = top / wr.h, v2 = bottom / wr.h;
-            doCropAndReplace(u1, v1, u2, v2);
+            // 자르기 후 화면 크기 유지: 잘라낸 사각형 폭 비율만큼 imageScale 축소
+            const newImageScale = Math.max(0.05, Math.min(4.0, scale * (u2 - u1)));
+            doCropAndReplace(u1, v1, u2, v2, newImageScale);
         };
         window.addEventListener('mousemove', move);
         window.addEventListener('mouseup', up);
     };
 
-    const doCropAndReplace = async (u1: number, v1: number, u2: number, v2: number) => {
+    const doCropAndReplace = async (u1: number, v1: number, u2: number, v2: number, newImageScale: number) => {
         if (!imgUrl) return;
         setCropping(true);
         try {
             const res = await fetch('/api/admin/exam-set/item/crop-image', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ itemId: item.id, examSetId, sourceUrl: imgUrl, u1, v1, u2, v2 }),
+                body: JSON.stringify({ itemId: item.id, examSetId, sourceUrl: imgUrl, u1, v1, u2, v2, newImageScale }),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
@@ -110,6 +142,8 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
             }
             const data = await res.json();
             setImgUrl(data.url);
+            setScale(newImageScale);
+            onSaved(); // 부모(exam-builder)가 새 URL 반영하도록 즉시 새로고침
         } catch (e: any) {
             alert(`자르기 실패: ${e?.message || String(e)}`);
         } finally {
@@ -146,42 +180,27 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
         }
     };
 
-    const save = async () => {
-        setSaving(true);
-        try {
-            await fetch('/api/admin/exam-set/item', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    examSetId,
-                    items: [{
-                        id: item.id,
-                        imageScale: scale,
-                        imageAlign: align,
-                    }],
-                }),
-            });
-            onSaved();
-        } catch (e: any) {
-            alert(`저장 실패: ${e?.message || String(e)}`);
-        } finally {
-            setSaving(false);
-        }
-    };
-
     return (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
             <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="p-6 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
                     <div>
                         <h3 className="text-lg font-black text-slate-900">이미지 조정</h3>
-                        <p className="text-xs text-slate-500 font-bold">이미지 위에 <b>사각형을 그리면 그 영역만 남습니다</b>. 크기·정렬은 우측에서 조절.</p>
+                        <p className="text-xs text-slate-500 font-bold">
+                            드래그로 사각형 그리면 <b>그 영역만 남음 (즉시 저장됨)</b>. 크기·정렬 조작도 자동 저장.
+                        </p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500"><X className="w-5 h-5" /></button>
+                    <div className="flex items-center gap-2">
+                        {(cropping || savingMeta || resetting) && (
+                            <span className="text-xs text-teal-600 font-bold flex items-center gap-1">
+                                <Loader2 className="w-3 h-3 animate-spin" /> 저장 중...
+                            </span>
+                        )}
+                        <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500"><X className="w-5 h-5" /></button>
+                    </div>
                 </div>
 
                 <div className="p-6 grid grid-cols-1 md:grid-cols-[1fr_300px] gap-6 flex-1 overflow-hidden">
-                    {/* 왼쪽: 이미지 + 사각형 그리기 영역 */}
                     <div className="bg-slate-100 rounded-2xl p-4 flex items-center justify-center min-h-[420px] overflow-auto">
                         {imgUrl ? (
                             <div
@@ -236,20 +255,12 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
                                 )}
                                 {cropping && (
                                     <div style={{
-                                        position: 'absolute',
-                                        inset: 0,
-                                        background: 'rgba(15,23,42,0.6)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
+                                        position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.6)',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
                                     }}>
-                                        <div style={{
-                                            background: 'white',
-                                            padding: '6px 14px',
-                                            borderRadius: 999,
-                                            fontWeight: 800,
-                                            fontSize: 12,
-                                        }}>자르는 중...</div>
+                                        <div style={{ background: 'white', padding: '6px 14px', borderRadius: 999, fontWeight: 800, fontSize: 12 }}>
+                                            자르는 중...
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -258,10 +269,10 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
                         )}
                     </div>
 
-                    {/* 오른쪽: 컨트롤 */}
                     <div className="space-y-5 overflow-y-auto pr-1">
                         <div className="bg-teal-50 border border-teal-100 rounded-xl p-3 text-[11px] text-teal-800 font-bold leading-relaxed">
-                            💡 <strong>이미지 위에 마우스로 드래그</strong>하면 사각형이 그려지고, 놓으면 그 영역만 남고 나머지는 잘려 저장됩니다.
+                            💡 이미지 위 드래그 → 사각형이 그려지고, 놓으면 그 영역만 남습니다.<br />
+                            <strong>자동 저장</strong>이라 저장 버튼 안 눌러도 돼요.
                         </div>
 
                         <div>
@@ -272,7 +283,7 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
                                 type="range"
                                 min="5" max="200" step="5"
                                 value={Math.round(scale * 100)}
-                                onChange={e => setScale(parseInt(e.target.value, 10) / 100)}
+                                onChange={e => onScaleChange(parseInt(e.target.value, 10) / 100)}
                                 className="w-full accent-teal-600"
                             />
                             <p className="text-[10px] text-slate-500 font-medium mt-1">
@@ -286,7 +297,7 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
                                 {(['left', 'center', 'right'] as const).map(a => (
                                     <button
                                         key={a}
-                                        onClick={() => setAlign(a)}
+                                        onClick={() => onAlignChange(a)}
                                         className={`flex items-center justify-center gap-1 py-2 rounded-lg text-xs font-bold ${align === a ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                                     >
                                         {a === 'left' ? <AlignLeft className="w-3 h-3" /> : a === 'right' ? <AlignRight className="w-3 h-3" /> : <AlignCenter className="w-3 h-3" />}
@@ -307,11 +318,9 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
                     </div>
                 </div>
 
-                <div className="p-6 border-t border-slate-100 flex justify-end gap-2 flex-shrink-0">
-                    <button onClick={onClose} className="px-5 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-black hover:bg-slate-200">닫기</button>
-                    <button onClick={save} disabled={saving} className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-black hover:bg-teal-700 disabled:bg-slate-300 flex items-center gap-1.5">
-                        {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                        크기·정렬 저장
+                <div className="p-4 border-t border-slate-100 flex justify-end flex-shrink-0">
+                    <button onClick={onClose} className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-black">
+                        완료
                     </button>
                 </div>
             </div>

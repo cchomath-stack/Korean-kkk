@@ -438,9 +438,9 @@ function SortableItem({ item, index, onRemove, onLabelChange, onAdjustImage }: {
             {/* Card body — preview */}
             <div className="p-5">
                 {isPassageSet && passage ? (
-                    <PassageSetPreview passage={passage} />
+                    <PassageSetPreview passage={passage} croppedImageUrl={(item as any).croppedImageUrl ?? null} />
                 ) : question ? (
-                    <QuestionPreview question={question} />
+                    <QuestionPreview question={question} croppedImageUrl={(item as any).croppedImageUrl ?? null} />
                 ) : (
                     <p className="text-xs text-rose-500 font-bold">⚠️ 원본 데이터를 찾을 수 없습니다 (삭제된 문항일 수 있음)</p>
                 )}
@@ -449,8 +449,8 @@ function SortableItem({ item, index, onRemove, onLabelChange, onAdjustImage }: {
     );
 }
 
-function PassageSetPreview({ passage }: { passage: any }) {
-    const passageImg = passage.imageUrl || passage.images?.[0]?.imageUrl;
+function PassageSetPreview({ passage, croppedImageUrl }: { passage: any; croppedImageUrl?: string | null }) {
+    const passageImg = croppedImageUrl || passage.imageUrl || passage.images?.[0]?.imageUrl;
     const questions = passage.questions || [];
     return (
         <div className="grid grid-cols-[140px_1fr] gap-4">
@@ -482,17 +482,18 @@ function PassageSetPreview({ passage }: { passage: any }) {
     );
 }
 
-function QuestionPreview({ question }: { question: any }) {
+function QuestionPreview({ question, croppedImageUrl }: { question: any; croppedImageUrl?: string | null }) {
     const meta = [
         question.year && `${question.year}년`,
         question.month && `${question.month}월`,
         question.grade && `${question.grade}학년`,
         question.area,
     ].filter(Boolean).join(' ');
+    const imgSrc = croppedImageUrl || question.imageUrl;
     return (
         <div className="grid grid-cols-[140px_1fr] gap-4">
             <div className="aspect-[3/4] bg-slate-50 rounded-xl border border-slate-100 overflow-hidden flex items-center justify-center">
-                <img src={question.imageUrl} alt="question" className="max-w-full max-h-full object-contain" />
+                <img src={imgSrc} alt="question" className="max-w-full max-h-full object-contain" />
             </div>
             <div>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">단독 문제</p>
