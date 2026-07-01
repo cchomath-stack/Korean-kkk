@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
-import Cropper, { Area } from 'react-easy-crop';
-import { X, Loader2, AlignLeft, AlignCenter, AlignRight, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X, Loader2, AlignLeft, AlignCenter, AlignRight, RotateCcw } from 'lucide-react';
 
 export type AdjustableItem = {
     id: number;
@@ -14,96 +13,157 @@ export type AdjustableItem = {
     cropBottom: number;
     cropLeft: number;
     cropRight: number;
+    croppedImageUrl?: string | null;
     passage?: any | null;
     question?: any | null;
 };
 
-// 인스타식 이미지 자르기 모달. react-easy-crop 사용.
-// - 이미지 위에서 드래그 = 위치 이동 (자르기 영역 이동)
-// - 마우스 휠 또는 슬라이더 = 줌
-// - 결과는 croppedAreaPercentages (백분율 0~100) → 우리 cropTop/Bottom/Left/Right (0~1 비율)로 변환
-// - imageScale, imageAlign은 별개 (시험지 단 안에서의 표시 옵션)
+function getInitialImgUrl(item: AdjustableItem): string | null {
+    if (item.croppedImageUrl) return item.croppedImageUrl;
+    if (item.kind === 'passage') {
+        return item.passage?.imageUrl || item.passage?.images?.[0]?.imageUrl || null;
+    }
+    return item.question?.imageUrl || null;
+}
+
+// exam-builder 카드 → [이미지 조정] 버튼 → 이 모달.
+// 이미지 위에 드래그로 사각형을 그리면 그 영역만 남기고 서버가 실제 파일을 잘라 교체함.
+// 크기(단 대비 %) · 정렬은 별도 슬라이더/버튼으로 저장 시 커밋.
 export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
     item: AdjustableItem;
     examSetId: number;
     onClose: () => void;
     onSaved: () => void;
 }) {
-    const isPassage = item.kind === 'passage';
-    const imgUrl: string | undefined = isPassage
-        ? (item.passage?.imageUrl || item.passage?.images?.[0]?.imageUrl)
-        : item.question?.imageUrl;
-
-    // === 자르기 상태 ===
-    // Cropper는 자체 crop, zoom 을 관리. 초기값을 기존 crop 비율에서 역산.
-    // 우리 저장 형식: cropTop/Bottom/Left/Right (0~1, 이미지 외곽에서 자른 비율)
-    // → cropper의 croppedArea (백분율 x, y, width, height)와 대응.
-    const initialCroppedArea: Area = {
-        x: (item.cropLeft ?? 0) * 100,
-        y: (item.cropTop ?? 0) * 100,
-        width: Math.max(1, (1 - (item.cropLeft ?? 0) - (item.cropRight ?? 0)) * 100),
-        height: Math.max(1, (1 - (item.cropTop ?? 0) - (item.cropBottom ?? 0)) * 100),
-    };
-
-    const [crop, setCrop] = useState({ x: 0, y: 0 });
-    const [zoom, setZoom] = useState(1);
-    const [croppedPct, setCroppedPct] = useState<Area>(initialCroppedArea);
-
-    // === 시험지 단 안에서 표시 옵션 (자르기와 별개) ===
+    const [imgUrl, setImgUrl] = useState<string | null>(getInitialImgUrl(item));
     const [scale, setScale] = useState(item.imageScale ?? 1.0);
     const [align, setAlign] = useState<'left' | 'center' | 'right'>((item.imageAlign as any) ?? 'center');
     const [saving, setSaving] = useState(false);
+    const [cropping, setCropping] = useState(false);
+    const [resetting, setResetting] = useState(false);
+
+    // 드래그 상태
+    const wrapRef = useRef<HTMLDivElement>(null);
+    const latestRect = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+    const wrapSize = useRef<{ w: number; h: number } | null>(null);
+    const [dragRect, setDragRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
     useEffect(() => {
+        setImgUrl(getInitialImgUrl(item));
         setScale(item.imageScale ?? 1.0);
         setAlign((item.imageAlign as any) ?? 'center');
-        setCrop({ x: 0, y: 0 });
-        setZoom(1);
-    }, [item.id]);
+    }, [item.id, item.croppedImageUrl]);
 
-    const onCropComplete = useCallback((_croppedAreaPixels: Area, croppedAreaPercentages: Area) => {
-        setCroppedPct(croppedAreaPercentages);
-    }, []);
+    const onMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const wrap = wrapRef.current;
+        if (!wrap) return;
+        const rect = wrap.getBoundingClientRect();
+        wrapSize.current = { w: rect.width, h: rect.height };
+        const startX = e.clientX - rect.left;
+        const startY = e.clientY - rect.top;
+        const initial = { x1: startX, y1: startY, x2: startX, y2: startY };
+        latestRect.current = initial;
+        setDragRect(initial);
 
-    const cropTop = Math.max(0, croppedPct.y) / 100;
-    const cropLeft = Math.max(0, croppedPct.x) / 100;
-    const cropBottom = Math.max(0, 100 - croppedPct.y - croppedPct.height) / 100;
-    const cropRight = Math.max(0, 100 - croppedPct.x - croppedPct.width) / 100;
+        const move = (ev: MouseEvent) => {
+            const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+            const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+            const next = { x1: startX, y1: startY, x2: nx, y2: ny };
+            latestRect.current = next;
+            setDragRect(next);
+        };
+        const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            setDragRect(null);
+            const cr = latestRect.current;
+            const wr = wrapSize.current;
+            latestRect.current = null;
+            wrapSize.current = null;
+            if (!cr || !wr) return;
+            const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
+            const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
+            if (right - left < 8 || bottom - top < 8) return;
 
-    const reset = () => {
-        setScale(1.0);
-        setAlign('center');
-        setCrop({ x: 0, y: 0 });
-        setZoom(1);
-        // Cropper가 다시 전체 영역을 잡도록 유도 — crop / zoom 리셋 시 자동으로 onCropComplete 재호출됨
+            const u1 = left / wr.w, u2 = right / wr.w;
+            const v1 = top / wr.h, v2 = bottom / wr.h;
+            doCropAndReplace(u1, v1, u2, v2);
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
     };
 
-    const save = async () => {
-        setSaving(true);
+    const doCropAndReplace = async (u1: number, v1: number, u2: number, v2: number) => {
+        if (!imgUrl) return;
+        setCropping(true);
         try {
-            const res = await fetch('/api/admin/exam-set/item', {
+            const res = await fetch('/api/admin/exam-set/item/crop-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ itemId: item.id, examSetId, sourceUrl: imgUrl, u1, v1, u2, v2 }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(`자르기 실패: ${err.detail || err.error || res.statusText}`);
+                return;
+            }
+            const data = await res.json();
+            setImgUrl(data.url);
+        } catch (e: any) {
+            alert(`자르기 실패: ${e?.message || String(e)}`);
+        } finally {
+            setCropping(false);
+        }
+    };
+
+    const resetToOriginal = async () => {
+        if (!confirm('원본 이미지로 되돌리고 크기·정렬도 초기화할까요?')) return;
+        setResetting(true);
+        try {
+            await fetch(`/api/admin/exam-set/item/crop-image?itemId=${item.id}`, { method: 'DELETE' });
+            await fetch('/api/admin/exam-set/item', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     examSetId,
                     items: [{
-                        id: item.id, order: item.order,
-                        imageScale: scale, imageAlign: align,
-                        cropTop: clamp01(cropTop),
-                        cropBottom: clamp01(cropBottom),
-                        cropLeft: clamp01(cropLeft),
-                        cropRight: clamp01(cropRight),
+                        id: item.id,
+                        imageScale: 1.0,
+                        imageAlign: 'left',
+                        cropTop: 0, cropBottom: 0, cropLeft: 0, cropRight: 0,
                     }],
                 }),
             });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                alert(`저장 실패: ${err.detail || err.error || res.statusText}`);
-                return;
-            }
+            setImgUrl(item.kind === 'passage'
+                ? (item.passage?.imageUrl || item.passage?.images?.[0]?.imageUrl || null)
+                : (item.question?.imageUrl || null));
+            setScale(1.0);
+            setAlign('left');
+            onSaved();
+        } finally {
+            setResetting(false);
+        }
+    };
+
+    const save = async () => {
+        setSaving(true);
+        try {
+            await fetch('/api/admin/exam-set/item', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    examSetId,
+                    items: [{
+                        id: item.id,
+                        imageScale: scale,
+                        imageAlign: align,
+                    }],
+                }),
+            });
             onSaved();
         } catch (e: any) {
-            alert(`저장 중 오류: ${e?.message || String(e)}`);
+            alert(`저장 실패: ${e?.message || String(e)}`);
         } finally {
             setSaving(false);
         }
@@ -111,63 +171,124 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
 
     return (
         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="p-6 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
                     <div>
                         <h3 className="text-lg font-black text-slate-900">이미지 조정</h3>
-                        <p className="text-xs text-slate-500 font-bold">드래그로 위치 이동 · 마우스 휠 / 슬라이더로 확대·축소</p>
+                        <p className="text-xs text-slate-500 font-bold">이미지 위에 <b>사각형을 그리면 그 영역만 남습니다</b>. 크기·정렬은 우측에서 조절.</p>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500"><X className="w-5 h-5" /></button>
                 </div>
 
                 <div className="p-6 grid grid-cols-1 md:grid-cols-[1fr_300px] gap-6 flex-1 overflow-hidden">
-                    {/* Cropper */}
-                    <div className="relative bg-slate-800 rounded-2xl overflow-hidden" style={{ minHeight: 420 }}>
+                    {/* 왼쪽: 이미지 + 사각형 그리기 영역 */}
+                    <div className="bg-slate-100 rounded-2xl p-4 flex items-center justify-center min-h-[420px] overflow-auto">
                         {imgUrl ? (
-                            <Cropper
-                                image={imgUrl}
-                                crop={crop}
-                                zoom={zoom}
-                                aspect={undefined}
-                                minZoom={0.5}
-                                maxZoom={4}
-                                zoomSpeed={0.5}
-                                initialCroppedAreaPercentages={initialCroppedArea}
-                                restrictPosition={false}
-                                onCropChange={setCrop}
-                                onZoomChange={setZoom}
-                                onCropComplete={onCropComplete}
-                                objectFit="contain"
-                                showGrid={true}
-                            />
+                            <div
+                                ref={wrapRef}
+                                onMouseDown={onMouseDown}
+                                style={{
+                                    position: 'relative',
+                                    display: 'inline-block',
+                                    cursor: 'crosshair',
+                                    userSelect: 'none',
+                                    maxWidth: '100%',
+                                    maxHeight: '70vh',
+                                    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                                }}
+                            >
+                                <img
+                                    src={imgUrl}
+                                    alt="edit"
+                                    draggable={false}
+                                    style={{
+                                        display: 'block',
+                                        maxWidth: '100%',
+                                        maxHeight: '70vh',
+                                        pointerEvents: 'none',
+                                        userSelect: 'none',
+                                    }}
+                                />
+                                {dragRect && (
+                                    <div
+                                        style={{
+                                            position: 'absolute',
+                                            left: Math.min(dragRect.x1, dragRect.x2),
+                                            top: Math.min(dragRect.y1, dragRect.y2),
+                                            width: Math.abs(dragRect.x2 - dragRect.x1),
+                                            height: Math.abs(dragRect.y2 - dragRect.y1),
+                                            border: '2.5px dashed #0d9488',
+                                            background: 'rgba(13,148,136,0.15)',
+                                            pointerEvents: 'none',
+                                        }}
+                                    >
+                                        <span style={{
+                                            background: '#0d9488',
+                                            color: 'white',
+                                            fontSize: 11,
+                                            fontWeight: 800,
+                                            padding: '2px 6px',
+                                            display: 'inline-block',
+                                            margin: '-1px 0 0 -1px',
+                                            whiteSpace: 'nowrap',
+                                        }}>이 영역만 남깁니다</span>
+                                    </div>
+                                )}
+                                {cropping && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        inset: 0,
+                                        background: 'rgba(15,23,42,0.6)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}>
+                                        <div style={{
+                                            background: 'white',
+                                            padding: '6px 14px',
+                                            borderRadius: 999,
+                                            fontWeight: 800,
+                                            fontSize: 12,
+                                        }}>자르는 중...</div>
+                                    </div>
+                                )}
+                            </div>
                         ) : (
-                            <div className="w-full h-full flex items-center justify-center text-slate-400">이미지 없음</div>
+                            <p className="text-slate-400 font-bold">이미지 없음</p>
                         )}
                     </div>
 
-                    {/* Controls */}
+                    {/* 오른쪽: 컨트롤 */}
                     <div className="space-y-5 overflow-y-auto pr-1">
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <label className="text-xs font-black text-slate-600">줌 {zoom.toFixed(2)}×</label>
-                                <div className="flex gap-1">
-                                    <button onClick={() => setZoom(z => Math.max(0.5, +(z - 0.1).toFixed(2)))} className="p-1 hover:bg-slate-100 rounded text-slate-500"><ZoomOut className="w-3.5 h-3.5" /></button>
-                                    <button onClick={() => setZoom(z => Math.min(4, +(z + 0.1).toFixed(2)))} className="p-1 hover:bg-slate-100 rounded text-slate-500"><ZoomIn className="w-3.5 h-3.5" /></button>
-                                </div>
-                            </div>
-                            <input type="range" min="0.5" max="4" step="0.05" value={zoom} onChange={e => setZoom(parseFloat(e.target.value))} className="w-full accent-teal-600" />
-                        </div>
-
                         <div className="bg-teal-50 border border-teal-100 rounded-xl p-3 text-[11px] text-teal-800 font-bold leading-relaxed">
-                            💡 <strong>이미지 위에서 드래그</strong>하면 자르기 위치가 바뀝니다.<br />
-                            마우스 <strong>휠</strong>을 굴리면 확대·축소.
+                            💡 <strong>이미지 위에 마우스로 드래그</strong>하면 사각형이 그려지고, 놓으면 그 영역만 남고 나머지는 잘려 저장됩니다.
                         </div>
 
                         <div>
-                            <label className="text-xs font-black text-slate-600 mb-2 block">시험지 안에서 위치</label>
+                            <label className="text-xs font-black text-slate-600 mb-2 block">
+                                이미지 폭 (단 대비 %) — {Math.round(scale * 100)}%
+                            </label>
+                            <input
+                                type="range"
+                                min="5" max="200" step="5"
+                                value={Math.round(scale * 100)}
+                                onChange={e => setScale(parseInt(e.target.value, 10) / 100)}
+                                className="w-full accent-teal-600"
+                            />
+                            <p className="text-[10px] text-slate-500 font-medium mt-1">
+                                시험지 한 단(좌/우 중 하나) 폭에서 이 이미지가 몇 %를 차지할지. 100%면 단 가득.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-black text-slate-600 mb-2 block">단 안에서 위치</label>
                             <div className="grid grid-cols-3 gap-1">
                                 {(['left', 'center', 'right'] as const).map(a => (
-                                    <button key={a} onClick={() => setAlign(a)} className={`flex items-center justify-center gap-1 py-2 rounded-lg text-xs font-bold ${align === a ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                                    <button
+                                        key={a}
+                                        onClick={() => setAlign(a)}
+                                        className={`flex items-center justify-center gap-1 py-2 rounded-lg text-xs font-bold ${align === a ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                    >
                                         {a === 'left' ? <AlignLeft className="w-3 h-3" /> : a === 'right' ? <AlignRight className="w-3 h-3" /> : <AlignCenter className="w-3 h-3" />}
                                         {a === 'left' ? '왼쪽' : a === 'right' ? '오른쪽' : '가운데'}
                                     </button>
@@ -175,37 +296,25 @@ export function ImageAdjustModal({ item, examSetId, onClose, onSaved }: {
                             </div>
                         </div>
 
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <label className="text-xs font-black text-slate-600">시험지 단에서 크기 {Math.round(scale * 100)}%</label>
-                            </div>
-                            <input type="range" min="30" max="200" step="5" value={Math.round(scale * 100)} onChange={e => setScale(parseInt(e.target.value, 10) / 100)} className="w-full accent-teal-600" />
-                        </div>
-
-                        <div className="bg-slate-50 rounded-xl p-3 text-[10px] text-slate-500 font-bold leading-relaxed">
-                            <div>잘라낸 영역: 위 {Math.round(cropTop * 100)}% · 아래 {Math.round(cropBottom * 100)}%</div>
-                            <div>왼쪽 {Math.round(cropLeft * 100)}% · 오른쪽 {Math.round(cropRight * 100)}%</div>
-                        </div>
-
-                        <button onClick={reset} className="w-full flex items-center justify-center gap-1.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-black">
-                            <RotateCcw className="w-3 h-3" /> 기본값으로
+                        <button
+                            onClick={resetToOriginal}
+                            disabled={resetting}
+                            className="w-full flex items-center justify-center gap-1.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-black disabled:opacity-50"
+                        >
+                            <RotateCcw className="w-3 h-3" />
+                            {resetting ? '복구 중...' : '원본 이미지로 복구 (크기·정렬도 초기화)'}
                         </button>
                     </div>
                 </div>
 
                 <div className="p-6 border-t border-slate-100 flex justify-end gap-2 flex-shrink-0">
-                    <button onClick={onClose} className="px-5 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-black hover:bg-slate-200">취소</button>
+                    <button onClick={onClose} className="px-5 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-black hover:bg-slate-200">닫기</button>
                     <button onClick={save} disabled={saving} className="px-5 py-2 bg-teal-600 text-white rounded-xl text-sm font-black hover:bg-teal-700 disabled:bg-slate-300 flex items-center gap-1.5">
                         {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                        저장
+                        크기·정렬 저장
                     </button>
                 </div>
             </div>
         </div>
     );
-}
-
-function clamp01(v: number): number {
-    if (!isFinite(v)) return 0;
-    return Math.max(0, Math.min(0.45, v));
 }
