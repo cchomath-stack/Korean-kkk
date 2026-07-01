@@ -192,10 +192,13 @@ model ExamItem {
   // 이미지 표시 옵션 (출제 시점에 사용자가 조정)
   imageScale   Float    @default(1.0) // 단 폭 대비 가로 비율 (0.3 ~ 2.0)
   imageAlign   String   @default("center") // left | center | right
-  cropTop      Float    @default(0) // 상단을 비율로 자르기 (0 ~ 0.5)
+  cropTop      Float    @default(0) // legacy CSS crop (자르기 데이터. 새 croppedImageUrl 있으면 무시됨)
   cropBottom   Float    @default(0)
   cropLeft     Float    @default(0)
   cropRight    Float    @default(0)
+  // 사용자가 자르기 사각형을 확정하면 canvas로 크롭한 실제 이미지 파일이 Vercel Blob에 저장되고
+  // 그 URL이 여기 들어감. 우선 사용. null이면 원본 사용.
+  croppedImageUrl String?
   createdAt    DateTime @default(now())
 
   @@unique([examSetId, kind, passageId, questionId])

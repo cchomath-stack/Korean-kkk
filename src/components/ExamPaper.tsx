@@ -15,6 +15,7 @@ export type ExamHydratedItem = {
     cropBottom?: number;
     cropLeft?: number;
     cropRight?: number;
+    croppedImageUrl?: string | null;
     passage: any | null;
     question: any | null;
 };
@@ -65,19 +66,28 @@ function flattenSlots(exam: ExamHydrated, opts: { showOriginalNo: boolean }): Sl
         const labelText = it.sectionLabel?.trim() || null;
         if (labelText) currentLabel = labelText;
 
+        // croppedImageUrl 있으면 실제 잘린 이미지 사용 (원본 대신).
+        // 이 URL은 항목당 하나로 고정되어 있으므로, passage/question 모두 이걸 우선.
+        const croppedUrl = it.croppedImageUrl || null;
+
         if (it.kind === 'passage' && it.passage) {
-            const passageImages: string[] = it.passage.images && it.passage.images.length > 0
-                ? it.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
-                : (it.passage.imageUrl ? [it.passage.imageUrl] : []);
-            for (const imgUrl of passageImages) {
+            if (croppedUrl) {
                 slots.push({
-                    type: 'passage',
-                    itemId: it.id,
-                    imageUrl: imgUrl,
-                    opts: o,
-                    sectionLabel: currentLabel,
+                    type: 'passage', itemId: it.id, imageUrl: croppedUrl,
+                    opts: o, sectionLabel: currentLabel,
                 });
-                currentLabel = null; // section 라벨은 첫 슬롯에만
+                currentLabel = null;
+            } else {
+                const passageImages: string[] = it.passage.images && it.passage.images.length > 0
+                    ? it.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
+                    : (it.passage.imageUrl ? [it.passage.imageUrl] : []);
+                for (const imgUrl of passageImages) {
+                    slots.push({
+                        type: 'passage', itemId: it.id, imageUrl: imgUrl,
+                        opts: o, sectionLabel: currentLabel,
+                    });
+                    currentLabel = null;
+                }
             }
             const questions = it.passage.questions || [];
             for (const q of questions) {
@@ -97,7 +107,7 @@ function flattenSlots(exam: ExamHydrated, opts: { showOriginalNo: boolean }): Sl
             slots.push({
                 type: 'question',
                 itemId: it.id,
-                imageUrl: q.imageUrl,
+                imageUrl: croppedUrl || q.imageUrl,
                 opts: o,
                 displayNo: displayNo++,
                 originalNo: opts.showOriginalNo ? (q.questionNo ?? null) : null,
@@ -116,9 +126,10 @@ type ExamPaperProps = {
     // 인라인 편집 모드 (미리보기 화면 전용)
     onInlineChange?: (itemId: number, patch: Partial<ImgOpts>) => void;
     onInlineCommit?: (itemId: number) => void; // mouseup 시 서버 저장 시점
+    examSetId?: number; // 자르기 후 이미지 업로드 시 필요
 };
 
-export function ExamPaper({ exam, showOriginalNo = true, onAdjustItem, onInlineChange, onInlineCommit }: ExamPaperProps) {
+export function ExamPaper({ exam, showOriginalNo = true, onAdjustItem, onInlineChange, onInlineCommit, examSetId }: ExamPaperProps) {
     const slots = flattenSlots(exam, { showOriginalNo });
 
     // 슬롯을 2개씩 그룹핑 → 각 페이지
@@ -148,10 +159,10 @@ export function ExamPaper({ exam, showOriginalNo = true, onAdjustItem, onInlineC
                     {/* 본문 = 좌·우 두 슬롯 */}
                     <main className="exam-body">
                         <div className="exam-slot exam-slot-left">
-                            {pair[0] && <SlotRender slot={pair[0]} onAdjustItem={onAdjustItem} onInlineChange={onInlineChange} onInlineCommit={onInlineCommit} />}
+                            {pair[0] && <SlotRender slot={pair[0]} onAdjustItem={onAdjustItem} onInlineChange={onInlineChange} onInlineCommit={onInlineCommit} examSetId={examSetId} />}
                         </div>
                         <div className="exam-slot exam-slot-right">
-                            {pair[1] && <SlotRender slot={pair[1]} onAdjustItem={onAdjustItem} onInlineChange={onInlineChange} onInlineCommit={onInlineCommit} />}
+                            {pair[1] && <SlotRender slot={pair[1]} onAdjustItem={onAdjustItem} onInlineChange={onInlineChange} onInlineCommit={onInlineCommit} examSetId={examSetId} />}
                         </div>
                     </main>
 
@@ -201,12 +212,13 @@ export function ExamPaper({ exam, showOriginalNo = true, onAdjustItem, onInlineC
 }
 
 function SlotRender({
-    slot, onAdjustItem, onInlineChange, onInlineCommit,
+    slot, onAdjustItem, onInlineChange, onInlineCommit, examSetId,
 }: {
     slot: Slot;
     onAdjustItem?: (itemId: number) => void;
     onInlineChange?: (itemId: number, patch: Partial<ImgOpts>) => void;
     onInlineCommit?: (itemId: number) => void;
+    examSetId?: number;
 }) {
     const editable = !!onInlineChange;
     const imgWrapRef = React.useRef<HTMLDivElement>(null);
@@ -236,9 +248,65 @@ function SlotRender({
         };
     }, [editable]);
 
-    // 이미지 본체 드래그는 no-op. 자르기는 오직 Shift + 마커(핸들) 드래그로만.
-    const onImgMouseDown = (_e: React.MouseEvent) => {
-        // no-op
+    // Shift + 이미지 위 드래그 = 남길 영역 사각형 그리기 → 놓으면 canvas로 실제 crop → Vercel Blob 업로드 → 새 이미지로 교체
+    const onImgMouseDown = (e: React.MouseEvent) => {
+        if (!editable) return;
+        if (!e.shiftKey) return;
+        e.preventDefault();
+        const wrap = imgWrapRef.current;
+        if (!wrap) return;
+        const rect = wrap.getBoundingClientRect();
+        const startX = e.clientX - rect.left;
+        const startY = e.clientY - rect.top;
+        setDragMode('crop');
+        setCropRect({ x1: startX, y1: startY, x2: startX, y2: startY });
+
+        const move = (ev: MouseEvent) => {
+            const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+            const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+            setCropRect(prev => prev ? { ...prev, x2: nx, y2: ny } : null);
+        };
+        const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            setDragMode(null);
+            setCropRect(cr => {
+                if (!cr) return null;
+                const w = rect.width, h = rect.height;
+                const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
+                const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
+                if (right - left < 8 || bottom - top < 8) return null;
+                // wrap 좌표계 사각형(0~1) → canvas crop 후 blob 업로드
+                const u1 = left / w, u2 = right / w, v1 = top / h, v2 = bottom / h;
+                doCropAndReplace(slot.imageUrl, slot.itemId, u1, v1, u2, v2);
+                return null;
+            });
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    };
+
+    const doCropAndReplace = async (srcUrl: string, itemId: number, u1: number, v1: number, u2: number, v2: number) => {
+        if (!examSetId) return;
+        try {
+            const blob = await cropImageToBlob(srcUrl, u1, v1, u2, v2);
+            const fd = new FormData();
+            fd.append('file', blob, 'cropped.png');
+            fd.append('itemId', String(itemId));
+            fd.append('examSetId', String(examSetId));
+            const res = await fetch('/api/admin/exam-set/item/crop-image', {
+                method: 'POST',
+                body: fd,
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(`자르기 저장 실패: ${err.detail || err.error || res.statusText}`);
+                return;
+            }
+            onInlineCommit?.(itemId);
+        } catch (e: any) {
+            alert(`자르기 실패: ${e?.message || String(e)}`);
+        }
     };
 
     // 리사이즈 (Shift 없음): 좌상단 앵커, 마우스 x 위치가 새 폭 결정
@@ -417,7 +485,9 @@ function SlotRender({
                             width: Math.abs(cropRect.x2 - cropRect.x1),
                             height: Math.abs(cropRect.y2 - cropRect.y1),
                         }}
-                    />
+                    >
+                        <span className="exam-crop-rect-label">이 영역만 남깁니다</span>
+                    </div>
                 )}
             </div>
             {onAdjustItem && !editable && (
@@ -473,6 +543,36 @@ function clamp(v: number, lo: number, hi: number): number {
 function clamp01(v: number): number {
     if (!isFinite(v)) return 0;
     return Math.max(0, Math.min(0.45, v));
+}
+
+// 이미지 URL을 로드하고 canvas로 지정 영역만 자른 blob(png)을 반환.
+// u1,v1,u2,v2: 원본 이미지 대비 상대 좌표 (0~1). u1<u2, v1<v2.
+async function cropImageToBlob(imgUrl: string, u1: number, v1: number, u2: number, v2: number): Promise<Blob> {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = (e) => reject(new Error('이미지 로드 실패'));
+        img.src = imgUrl;
+    });
+    const W = img.naturalWidth;
+    const H = img.naturalHeight;
+    const sx = Math.max(0, Math.floor(W * u1));
+    const sy = Math.max(0, Math.floor(H * v1));
+    const sw = Math.max(1, Math.floor(W * (u2 - u1)));
+    const sh = Math.max(1, Math.floor(H * (v2 - v1)));
+    const canvas = document.createElement('canvas');
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas 컨텍스트 획득 실패');
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    return new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(b => {
+            if (b) resolve(b);
+            else reject(new Error('canvas.toBlob 실패'));
+        }, 'image/png');
+    });
 }
 
 function ImgWithOpts({ src, alt, opts }: { src: string; alt: string; opts: ImgOpts }) {
@@ -831,10 +931,24 @@ const EXAM_PAPER_CSS = `
 
 .exam-crop-rect {
     position: absolute;
-    border: 2px dashed #0d9488;
-    background: rgba(13,148,136,0.12);
+    border: 2.5px dashed #0d9488;
+    background: rgba(13,148,136,0.15);
     pointer-events: none;
     z-index: 20;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+}
+.exam-crop-rect-label {
+    background: #0d9488;
+    color: white;
+    font-family: 'Nanum Gothic', 'Pretendard', sans-serif;
+    font-size: 9pt;
+    font-weight: 800;
+    padding: 2px 6px;
+    margin: -1px 0 0 -1px;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
 }
 
 /* 이미지 조정 버튼 (화면 미리보기 전용) */

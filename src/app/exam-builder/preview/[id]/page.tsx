@@ -294,7 +294,7 @@ export default function ExamPreviewPage() {
             </header>
 
             <div className="bg-teal-50 border-b border-teal-100 px-6 py-2 text-center text-xs font-bold text-teal-800">
-                💡 파란 조절점 드래그 = <b>이미지 크기 조절</b> · <b>Shift 누르면 조절점이 검은 자르기 마커로 변신</b> → 그 마커를 이미지 안쪽으로 드래그하면 그 방향에서 잘림 (예: 우측 마커 좌로 드래그 = 우측만 잘림) · <b>Ctrl+Z</b> = 취소
+                💡 파란 조절점 드래그 = <b>이미지 크기 조절</b> · <b>Shift 누른 채 이미지 위에서 드래그 = 그린 영역만 남기기</b> (선택된 사각형이 새 이미지가 되고 원본은 이 시험지에서 대체됨) · <b>Ctrl+Z</b> = 취소
             </div>
 
             <ExamPaper
@@ -302,6 +302,7 @@ export default function ExamPreviewPage() {
                 showOriginalNo={showOriginalNo}
                 onInlineChange={handleInlineChange}
                 onInlineCommit={handleInlineCommit}
+                examSetId={exam.id}
             />
         </div>
     );
