@@ -236,9 +236,56 @@ function SlotRender({
         };
     }, [editable]);
 
-    // 이미지 body 드래그는 아무 동작 안 함 (자르기는 오직 Shift + 핸들 드래그로만)
-    const onImgMouseDown = (_e: React.MouseEvent) => {
-        // no-op
+    // 이미지 본체 Shift+드래그 = 사각형 그리기로 남길 영역 선택 (인스타식 자르기)
+    const onImgMouseDown = (e: React.MouseEvent) => {
+        if (!editable) return;
+        if (!e.shiftKey) return;
+        e.preventDefault();
+        const wrap = imgWrapRef.current;
+        if (!wrap) return;
+        const rect = wrap.getBoundingClientRect();
+        const startX = e.clientX - rect.left;
+        const startY = e.clientY - rect.top;
+        setDragMode('crop');
+        setCropRect({ x1: startX, y1: startY, x2: startX, y2: startY });
+
+        const startCropL = slot.opts.cropLeft;
+        const startCropR = slot.opts.cropRight;
+        const startCropT = slot.opts.cropTop;
+        const startCropB = slot.opts.cropBottom;
+        const startVisW = Math.max(0.05, 1 - startCropL - startCropR);
+        const startVisH = Math.max(0.05, 1 - startCropT - startCropB);
+
+        const move = (ev: MouseEvent) => {
+            const nx = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+            const ny = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+            setCropRect(prev => prev ? { ...prev, x2: nx, y2: ny } : null);
+        };
+        const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            setDragMode(null);
+            setCropRect(cr => {
+                if (!cr || !onInlineChange) return null;
+                const w = rect.width, h = rect.height;
+                const left = Math.min(cr.x1, cr.x2), right = Math.max(cr.x1, cr.x2);
+                const top = Math.min(cr.y1, cr.y2), bottom = Math.max(cr.y1, cr.y2);
+                if (right - left < 8 || bottom - top < 8) return null;
+                // wrap 좌표계에서 그린 영역(u,v: 0~1) → 현재 visible 영역 안의 상대 위치
+                // → 원본 이미지 좌표계로 누적
+                const u1 = left / w, u2 = right / w, v1 = top / h, v2 = bottom / h;
+                onInlineChange(slot.itemId, {
+                    cropLeft: clamp01(startCropL + u1 * startVisW),
+                    cropRight: clamp01(startCropR + (1 - u2) * startVisW),
+                    cropTop: clamp01(startCropT + v1 * startVisH),
+                    cropBottom: clamp01(startCropB + (1 - v2) * startVisH),
+                });
+                onInlineCommit?.(slot.itemId);
+                return null;
+            });
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
     };
 
     // 리사이즈 (Shift 없음): 좌상단 앵커, 마우스 x 위치가 새 폭 결정
