@@ -444,7 +444,9 @@ function EditHandles({
                 <div
                     key={h.pos}
                     className={`exam-handle exam-handle-${h.pos} ${shiftHeld ? 'crop-mode' : ''}`}
-                    onMouseDown={(e) => shiftHeld ? onCropStart(e, h.dirX, h.dirY) : onScaleStart(e)}
+                    // shiftHeld state 대신 실제 mousedown 이벤트의 shiftKey를 사용 —
+                    // 상태 반영 타이밍보다 안전.
+                    onMouseDown={(e) => e.shiftKey ? onCropStart(e, h.dirX, h.dirY) : onScaleStart(e)}
                 />
             ))}
         </>
@@ -605,7 +607,7 @@ const EXAM_PAPER_CSS = `
 }
 .exam-slot {
     padding: 0 5mm;
-    overflow: hidden;
+    overflow: visible; /* 조절점 핸들이 wrap 경계 밖(padding 영역)에 위치하므로 clip 금지 */
     min-width: 0;
     display: flex;
     flex-direction: column;
