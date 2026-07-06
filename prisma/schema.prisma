@@ -83,6 +83,10 @@ model Question {
   answer            String?
   difficulty        String?
   questionNo        Int?
+  // 모고입력키워드 — 예: m01231117 (m + 고1(01) + 23년 + 11월 + 17번). 검색·정렬용.
+  sourceKey         String?
+  // 사용자가 이미지에 적힌 문제번호를 그대로 입력 (1~999). 본인 교재에서의 번호.
+  imageNo           Int?
   // 단독 문제(passage 없음)일 때 직접 보유할 수 있는 메타. passage 있으면 그쪽 우선.
   year              Int?
   month             Int?
@@ -101,6 +105,8 @@ model Question {
   updatedAt         DateTime                  @updatedAt
 
   @@index([pdfDocumentId])
+  @@index([sourceKey])
+  @@index([imageNo])
 }
 
 model Tag {
@@ -160,129 +166,88 @@ model QuestionGrammarCategory {
 // 시험지 (Exam Paper) — admin이 만드는 출제 단위
 // status: "draft" = 현재 작업중 (사용자당 1개만), "saved" = 출제 완료/저장됨
 model ExamSet {
-  id          Int        @id @default(autoincrement())
-  ownerId     Int // 소유자 (User.id). draft는 사용자당 1개.
-  status      String     @default("draft") // draft | saved
-  title       String? // 시험지 제목
-  subTitle    String? // 소제목 (예: "고1 2025년 3월 - 교육청 모의평가")
-  academyName String? // 학원명
-  grade       Int? // 학년
-  durationMin Int? // 시험 시간(분)
-  totalScore  Int? // 총점
-  pdfUrl      String? // 출제 후 저장된 PDF URL (선택)
-  items       ExamItem[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id                   Int                   @id @default(autoincrement())
+  ownerId              Int // 소유자 (User.id). draft는 사용자당 1개.
+  status               String                @default("draft") // draft | saved
+  title                String? // 시험지 제목
+  subTitle             String? // 소제목 (예: "고1 2025년 3월 - 교육청 모의평가")
+  academyName          String? // 학원명
+  grade                Int? // 학년
+  durationMin          Int? // 시험 시간(분)
+  totalScore           Int? // 총점
+  pdfUrl               String? // 출제 후 저장된 PDF URL (선택)
+  // 학생 오답노트 공개 설정
+  isStudentPublic      Boolean               @default(false)
+  studentAccessSlug    String?               @unique // /student/exam/[slug] 로 접근
+  wrongNoteDesign      String                @default("oreum") // "mexx" | "oreum"
+  items                ExamItem[]
+  wrongNoteSubmissions WrongNoteSubmission[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
   @@index([ownerId, status])
+  @@index([isStudentPublic])
 }
 
 // 시험지 안에 담긴 항목(지문 세트 또는 단독 문제)
 // kind="passage" → passageId 있음 (지문 + 그 지문의 문제들 통째)
 // kind="question" → questionId 있음 (단독 문제 또는 "문제만 담기" 선택한 경우)
 model ExamItem {
-  id           Int      @id @default(autoincrement())
-  examSetId    Int
-  examSet      ExamSet  @relation(fields: [examSetId], references: [id], onDelete: Cascade)
-  kind         String // "passage" | "question"
-  passageId    Int?
-  questionId   Int?
-  sectionLabel String? // 보라색 태그용 (예: "기출 문제", "변형 문제 1")
-  order        Int      @default(0)
+  id               Int                   @id @default(autoincrement())
+  examSetId        Int
+  examSet          ExamSet               @relation(fields: [examSetId], references: [id], onDelete: Cascade)
+  kind             String // "passage" | "question"
+  passageId        Int?
+  questionId       Int?
+  sectionLabel     String? // 보라색 태그용 (예: "기출 문제", "변형 문제 1")
+  order            Int                   @default(0)
   // 이미지 표시 옵션 (출제 시점에 사용자가 조정)
-  imageScale   Float    @default(1.0) // 단 폭 대비 가로 비율 (0.3 ~ 2.0)
-  imageAlign   String   @default("center") // left | center | right
-  cropTop      Float    @default(0) // legacy CSS crop (자르기 데이터. 새 croppedImageUrl 있으면 무시됨)
-  cropBottom   Float    @default(0)
-  cropLeft     Float    @default(0)
-  cropRight    Float    @default(0)
+  imageScale       Float                 @default(1.0) // 단 폭 대비 가로 비율 (0.3 ~ 2.0)
+  imageAlign       String                @default("center") // left | center | right
+  cropTop          Float                 @default(0) // legacy CSS crop (자르기 데이터. 새 croppedImageUrl 있으면 무시됨)
+  cropBottom       Float                 @default(0)
+  cropLeft         Float                 @default(0)
+  cropRight        Float                 @default(0)
   // 사용자가 자르기 사각형을 확정하면 canvas로 크롭한 실제 이미지 파일이 Vercel Blob에 저장되고
   // 그 URL이 여기 들어감. 우선 사용. null이면 원본 사용.
-  croppedImageUrl String?
-  createdAt    DateTime @default(now())
+  croppedImageUrl  String?
+  wrongNoteAnswers WrongNoteAnswerItem[]
+  createdAt        DateTime              @default(now())
 
   @@unique([examSetId, kind, passageId, questionId])
   @@index([examSetId])
 }
 
-// === 오답워크북 ===
+// === 오답노트 (재설계) ===
+// 학생이 시험지 링크(/student/exam/[slug])로 접속 → 이름/전화/학원(반) 입력 →
+// 틀린 문제 체크 → 제출. Admin이 /admin/wrong-notes 에서 확인 후 PDF 다운로드.
 
-// 학원 마스터 — 학원 별 코드 + 기본 디자인 매핑
-model Academy {
-  id                Int                @id @default(autoincrement())
-  name              String             @unique
-  code              String             @unique // 학생이 입력할 코드 (예: OREUM-2026)
-  defaultDesign     String             @default("oreum") // "mexx" | "oreum"
-  logoUrl           String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  wrongNoteRequests WrongNoteRequest[]
-}
-
-// 회차(시험지 풀) — 학생이 풀 수 있는 100~200문제 모음
-// 시험지 제작용 ExamSet과는 별개 모델 (학생용 풀)
-model ExamRound {
-  id                 Int                @id @default(autoincrement())
-  title              String // 회차 이름 (예: "2026 6월 모의평가 1회")
-  subTitle           String? // 서브 (예: "독서·문학 영역")
-  grade              Int? // 대상 학년
-  isPublic           Boolean            @default(false) // 학생에게 보이는지
-  requireAcademyCode Boolean            @default(true) // 학원 코드 필요 여부
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  items              RoundItem[]
-  wrongNoteRequests  WrongNoteRequest[]
-
-  @@index([isPublic])
-}
-
-// 회차에 담긴 항목 (지문 세트 또는 단독 문제) — ExamItem과 같은 구조
-model RoundItem {
-  id           Int               @id @default(autoincrement())
-  roundId      Int
-  round        ExamRound         @relation(fields: [roundId], references: [id], onDelete: Cascade)
-  kind         String // "passage" | "question"
-  passageId    Int?
-  questionId   Int?
-  order        Int               @default(0)
-  createdAt    DateTime          @default(now())
-  wrongAnswers WrongNoteAnswer[]
-
-  @@unique([roundId, kind, passageId, questionId])
-  @@index([roundId])
-}
-
-// 학생 오답노트 요청 — 학생 외부 페이지에서 제출됨
-model WrongNoteRequest {
-  id          Int               @id @default(autoincrement())
-  academyId   Int?
-  academy     Academy?          @relation(fields: [academyId], references: [id], onDelete: SetNull)
-  roundId     Int
-  round       ExamRound         @relation(fields: [roundId], references: [id], onDelete: Cascade)
-  studentName String
-  school      String?
-  grade       Int?
-  design      String            @default("oreum") // 출력 디자인 (학원의 default 따라감)
-  status      String            @default("pending") // pending | processed
-  pdfUrl      String?
-  createdAt   DateTime          @default(now())
-  processedAt DateTime?
-  answers     WrongNoteAnswer[]
+// 학생 제출 1건
+model WrongNoteSubmission {
+  id             Int                   @id @default(autoincrement())
+  examSetId      Int
+  examSet        ExamSet               @relation(fields: [examSetId], references: [id], onDelete: Cascade)
+  studentName    String // 학생 이름
+  studentPhone   String? // 전화번호
+  studentAcademy String? // 학원(반) — 자유 텍스트
+  status         String                @default("pending") // pending | processed
+  createdAt      DateTime              @default(now())
+  processedAt    DateTime?
+  answers        WrongNoteAnswerItem[]
 
   @@index([status, createdAt])
-  @@index([academyId])
-  @@index([roundId])
+  @@index([examSetId])
 }
 
-// 학생이 틀렸다고 체크한 항목 (RoundItem 참조)
-model WrongNoteAnswer {
-  id          Int              @id @default(autoincrement())
-  requestId   Int
-  request     WrongNoteRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  roundItemId Int
-  roundItem   RoundItem        @relation(fields: [roundItemId], references: [id], onDelete: Cascade)
-  createdAt   DateTime         @default(now())
+// 학생이 틀렸다고 체크한 ExamItem 참조
+model WrongNoteAnswerItem {
+  id           Int                 @id @default(autoincrement())
+  submissionId Int
+  submission   WrongNoteSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  examItemId   Int
+  examItem     ExamItem            @relation(fields: [examItemId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
 
-  @@unique([requestId, roundItemId])
-  @@index([requestId])
+  @@unique([submissionId, examItemId])
+  @@index([submissionId])
 }

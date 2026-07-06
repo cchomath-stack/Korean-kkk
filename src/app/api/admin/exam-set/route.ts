@@ -4,6 +4,20 @@ import { requireAdmin } from '@/lib/session';
 
 const FORBIDDEN = NextResponse.json({ error: '관리자 권한이 필요합니다.' }, { status: 403 });
 
+// URL-safe 랜덤 슬러그 (10자, 소문자+숫자)
+async function generateUniqueSlug(): Promise<string> {
+    const CHARS = 'abcdefghijkmnpqrstuvwxyz23456789'; // 헷갈리는 0/o/1/l 제거
+    for (let attempt = 0; attempt < 8; attempt++) {
+        const bytes = new Uint8Array(10);
+        crypto.getRandomValues(bytes);
+        let slug = '';
+        for (const b of bytes) slug += CHARS[b % CHARS.length];
+        const existing = await prisma.examSet.findUnique({ where: { studentAccessSlug: slug } });
+        if (!existing) return slug;
+    }
+    throw new Error('slug 발급 실패');
+}
+
 // 현재 작업중인 draft 시험지 조회 (없으면 새로 생성)
 // 또는 ?id= 로 특정 시험지 조회 / ?status=saved 로 저장된 목록 조회
 export async function GET(request: NextRequest) {
@@ -75,18 +89,26 @@ export async function PUT(request: NextRequest) {
             return NextResponse.json({ error: '시험지를 찾을 수 없습니다.' }, { status: 404 });
         }
 
-        const allowed = ['title', 'subTitle', 'academyName', 'grade', 'durationMin', 'totalScore', 'status', 'pdfUrl'] as const;
+        const allowed = ['title', 'subTitle', 'academyName', 'grade', 'durationMin', 'totalScore', 'status', 'pdfUrl', 'isStudentPublic', 'wrongNoteDesign'] as const;
         const intFields = new Set(['grade', 'durationMin', 'totalScore']);
+        const boolFields = new Set(['isStudentPublic']);
         const data: any = {};
         for (const k of allowed) {
             if (k in rest) {
                 const v = (rest as any)[k];
                 if (intFields.has(k)) {
                     data[k] = v === '' || v == null ? null : parseInt(String(v), 10);
+                } else if (boolFields.has(k)) {
+                    data[k] = !!v;
                 } else {
                     data[k] = v === '' ? null : v;
                 }
             }
+        }
+
+        // isStudentPublic=true로 전환하는 순간 slug가 없으면 새로 발급
+        if (data.isStudentPublic === true && !exam.studentAccessSlug) {
+            data.studentAccessSlug = await generateUniqueSlug();
         }
 
         const updated = await prisma.examSet.update({

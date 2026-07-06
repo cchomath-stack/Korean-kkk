@@ -4,6 +4,9 @@ import { requireAdmin } from '@/lib/session';
 
 const FORBIDDEN = NextResponse.json({ error: '관리자 권한이 필요합니다.' }, { status: 403 });
 
+// GET: ?id=X&hydrate=1 → 단건 상세 (문항 이미지까지 채워서 반환)
+//      ?status=pending|processed → 목록 필터
+//      아무 것도 없으면 전체 목록
 export async function GET(request: NextRequest) {
     if (!(await requireAdmin())) return FORBIDDEN;
     try {
@@ -13,25 +16,29 @@ export async function GET(request: NextRequest) {
         const status = searchParams.get('status');
 
         if (id) {
-            const req = await prisma.wrongNoteRequest.findUnique({
+            const submission = await prisma.wrongNoteSubmission.findUnique({
                 where: { id: parseInt(id, 10) },
                 include: {
-                    academy: true,
-                    round: true,
-                    answers: { include: { roundItem: true } },
+                    examSet: {
+                        select: {
+                            id: true, title: true, subTitle: true, grade: true, academyName: true,
+                            wrongNoteDesign: true, studentAccessSlug: true,
+                        },
+                    },
+                    answers: { include: { examItem: true } },
                 },
             });
-            if (!req) return NextResponse.json({ error: '요청을 찾을 수 없습니다.' }, { status: 404 });
+            if (!submission) return NextResponse.json({ error: '요청을 찾을 수 없습니다.' }, { status: 404 });
 
-            if (!hydrate) return NextResponse.json(req);
+            if (!hydrate) return NextResponse.json(submission);
 
-            // hydrate: 각 answer.roundItem에 passage/question 정보 채움
-            const passageIds = req.answers
-                .filter(a => a.roundItem.kind === 'passage' && a.roundItem.passageId)
-                .map(a => a.roundItem.passageId!);
-            const questionIds = req.answers
-                .filter(a => a.roundItem.kind === 'question' && a.roundItem.questionId)
-                .map(a => a.roundItem.questionId!);
+            // hydrate: examItem의 passage/question 이미지+메타 채우기
+            const passageIds = submission.answers
+                .filter(a => a.examItem.kind === 'passage' && a.examItem.passageId)
+                .map(a => a.examItem.passageId!);
+            const questionIds = submission.answers
+                .filter(a => a.examItem.kind === 'question' && a.examItem.questionId)
+                .map(a => a.examItem.questionId!);
 
             const [passages, questions] = await Promise.all([
                 passageIds.length > 0
@@ -55,26 +62,25 @@ export async function GET(request: NextRequest) {
             const pMap = new Map(passages.map(p => [p.id, p]));
             const qMap = new Map(questions.map(q => [q.id, q]));
 
-            const hydratedAnswers = req.answers
-                .sort((a, b) => a.roundItem.order - b.roundItem.order)
+            const hydratedAnswers = submission.answers
+                .sort((a, b) => a.examItem.order - b.examItem.order)
                 .map(a => ({
                     ...a,
-                    passage: a.roundItem.kind === 'passage' && a.roundItem.passageId ? pMap.get(a.roundItem.passageId) ?? null : null,
-                    question: a.roundItem.kind === 'question' && a.roundItem.questionId ? qMap.get(a.roundItem.questionId) ?? null : null,
+                    passage: a.examItem.kind === 'passage' && a.examItem.passageId ? pMap.get(a.examItem.passageId) ?? null : null,
+                    question: a.examItem.kind === 'question' && a.examItem.questionId ? qMap.get(a.examItem.questionId) ?? null : null,
                 }));
 
-            return NextResponse.json({ ...req, answers: hydratedAnswers });
+            return NextResponse.json({ ...submission, answers: hydratedAnswers });
         }
 
         const where: any = {};
         if (status) where.status = status;
 
-        const list = await prisma.wrongNoteRequest.findMany({
+        const list = await prisma.wrongNoteSubmission.findMany({
             where,
             orderBy: { createdAt: 'desc' },
             include: {
-                academy: { select: { id: true, name: true } },
-                round: { select: { id: true, title: true } },
+                examSet: { select: { id: true, title: true, subTitle: true, grade: true } },
                 _count: { select: { answers: true } },
             },
         });
@@ -85,20 +91,20 @@ export async function GET(request: NextRequest) {
     }
 }
 
+// PUT: 상태 변경(pending↔processed), 개별 요청에 대한 디자인 오버라이드는 지원하지 않음
+// (디자인은 ExamSet.wrongNoteDesign에서 결정됨)
 export async function PUT(request: NextRequest) {
     if (!(await requireAdmin())) return FORBIDDEN;
     try {
         const body = await request.json();
-        const { id, status, design } = body;
+        const { id, status } = body;
         if (!id) return NextResponse.json({ error: 'ID가 필요합니다.' }, { status: 400 });
         const data: any = {};
         if (status === 'pending' || status === 'processed') {
             data.status = status;
-            if (status === 'processed') data.processedAt = new Date();
-            else data.processedAt = null;
+            data.processedAt = status === 'processed' ? new Date() : null;
         }
-        if (design === 'mexx' || design === 'oreum') data.design = design;
-        const updated = await prisma.wrongNoteRequest.update({
+        const updated = await prisma.wrongNoteSubmission.update({
             where: { id: parseInt(String(id), 10) },
             data,
         });
@@ -115,7 +121,7 @@ export async function DELETE(request: NextRequest) {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
         if (!id) return NextResponse.json({ error: 'ID가 필요합니다.' }, { status: 400 });
-        await prisma.wrongNoteRequest.delete({ where: { id: parseInt(id, 10) } });
+        await prisma.wrongNoteSubmission.delete({ where: { id: parseInt(id, 10) } });
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Delete WrongNote Error:', error);

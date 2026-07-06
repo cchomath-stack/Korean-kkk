@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import {
-    Home, BookOpen, Search, Loader2, Edit2, Trash2, ChevronLeft, ChevronRight, Save, X
+    Home, BookOpen, Search, Loader2, Edit2, Trash2, ChevronLeft, ChevronRight, Save, X, FileText,
 } from 'lucide-react';
 
 const AREAS = ['문학', '독서', '화작', '언매'];
@@ -85,6 +85,12 @@ export default function PassagesAdminPage() {
                     <BookOpen size={16} /> 지문 관리
                 </h1>
                 <span className="text-xs text-slate-400 font-medium">총 {total}건</span>
+                <Link
+                    href="/admin/questions"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded bg-teal-600 text-white hover:bg-teal-700"
+                >
+                    <FileText size={13} /> 문제 관리
+                </Link>
                 <div className="ml-auto flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5 w-80">
                     <Search size={14} className="text-slate-400" />
                     <input

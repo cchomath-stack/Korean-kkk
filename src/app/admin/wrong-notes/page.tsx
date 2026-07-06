@@ -2,19 +2,17 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, Loader2, Inbox, Download, Check, CircleDot, Trash2, FileText } from 'lucide-react';
+import { ChevronLeft, Loader2, Inbox, Download, Check, CircleDot, Trash2, FileText, Phone } from 'lucide-react';
 
 type WrongNote = {
     id: number;
     studentName: string;
-    school: string | null;
-    grade: number | null;
-    design: string;
+    studentPhone: string | null;
+    studentAcademy: string | null;
     status: string;
     createdAt: string;
     processedAt: string | null;
-    academy: { id: number; name: string } | null;
-    round: { id: number; title: string };
+    examSet: { id: number; title: string | null; subTitle: string | null; grade: number | null };
     _count: { answers: number };
 };
 
@@ -51,7 +49,6 @@ export default function WrongNotesAdminPage() {
             a.click();
             a.remove();
             URL.revokeObjectURL(url);
-            // 자동 처리완료 토글은 안 함 (운영자가 명시적으로 처리)
         } finally {
             setDownloading(null);
         }
@@ -63,15 +60,6 @@ export default function WrongNotesAdminPage() {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: item.id, status: next }),
-        });
-        load();
-    };
-
-    const changeDesign = async (item: WrongNote, design: 'mexx' | 'oreum') => {
-        await fetch('/api/admin/wrong-note', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: item.id, design }),
         });
         load();
     };
@@ -125,8 +113,8 @@ export default function WrongNotesAdminPage() {
                                 <div className="flex-grow min-w-0">
                                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                                         <h3 className="font-black text-slate-900">{item.studentName}</h3>
-                                        {item.school && <span className="text-xs text-slate-500 font-bold">{item.school}</span>}
-                                        {item.grade && <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">{item.grade}학년</span>}
+                                        {item.studentAcademy && <span className="text-xs text-slate-500 font-bold">{item.studentAcademy}</span>}
+                                        {item.examSet.grade && <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold rounded">고{item.examSet.grade}</span>}
                                         {item.status === 'pending' ? (
                                             <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-black rounded">
                                                 <CircleDot className="w-2.5 h-2.5" /> 미처리
@@ -139,21 +127,17 @@ export default function WrongNotesAdminPage() {
                                     </div>
                                     <div className="flex items-center gap-3 text-xs text-slate-500 font-bold flex-wrap">
                                         <span className="flex items-center gap-1">
-                                            <FileText className="w-3 h-3" /> {item.round.title}
+                                            <FileText className="w-3 h-3" /> {item.examSet.title || '(제목 없음)'}
                                         </span>
-                                        {item.academy && <span>{item.academy.name}</span>}
+                                        {item.studentPhone && (
+                                            <span className="flex items-center gap-1">
+                                                <Phone className="w-3 h-3" /> {item.studentPhone}
+                                            </span>
+                                        )}
                                         <span className="text-teal-600">{item._count.answers}문제 틀림</span>
                                         <span>{new Date(item.createdAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}</span>
                                     </div>
                                 </div>
-                                <select
-                                    value={item.design}
-                                    onChange={e => changeDesign(item, e.target.value as any)}
-                                    className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black"
-                                >
-                                    <option value="oreum">🌿 오름</option>
-                                    <option value="mexx">▪ MEXX</option>
-                                </select>
                                 <button
                                     onClick={() => downloadPdf(item.id, item.studentName)}
                                     disabled={downloading === item.id}

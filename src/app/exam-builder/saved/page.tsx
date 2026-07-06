@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, FileText, Eye, Trash2, Loader2, Inbox } from 'lucide-react';
+import { ChevronLeft, FileText, Eye, Trash2, Loader2, Inbox, Share2, Copy, Check, ExternalLink } from 'lucide-react';
 
 type SavedExam = {
     id: number;
@@ -12,6 +12,9 @@ type SavedExam = {
     grade: number | null;
     durationMin: number | null;
     totalScore: number | null;
+    isStudentPublic: boolean;
+    studentAccessSlug: string | null;
+    wrongNoteDesign: string;
     updatedAt: string;
     createdAt: string;
     _count: { items: number };
@@ -20,6 +23,7 @@ type SavedExam = {
 export default function SavedExamsPage() {
     const [exams, setExams] = useState<SavedExam[]>([]);
     const [loading, setLoading] = useState(true);
+    const [copiedId, setCopiedId] = useState<number | null>(null);
 
     const load = async () => {
         setLoading(true);
@@ -37,6 +41,33 @@ export default function SavedExamsPage() {
         if (!confirm('이 시험지를 삭제할까요? (담긴 문항 목록도 함께 삭제됩니다)')) return;
         const res = await fetch(`/api/admin/exam-set?id=${id}`, { method: 'DELETE' });
         if (res.ok) load();
+    };
+
+    const updateExam = async (id: number, patch: Partial<SavedExam>) => {
+        const res = await fetch('/api/admin/exam-set', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, ...patch }),
+        });
+        if (res.ok) {
+            const updated = await res.json();
+            setExams(prev => prev.map(e => e.id === id ? { ...e, ...updated } : e));
+        }
+    };
+
+    const publicUrl = (slug: string | null) =>
+        slug && typeof window !== 'undefined' ? `${window.location.origin}/student/exam/${slug}` : '';
+
+    const handleCopy = async (id: number, slug: string | null) => {
+        const url = publicUrl(slug);
+        if (!url) return;
+        try {
+            await navigator.clipboard.writeText(url);
+            setCopiedId(id);
+            setTimeout(() => setCopiedId(null), 1500);
+        } catch {
+            alert(url);
+        }
     };
 
     return (
@@ -112,7 +143,72 @@ export default function SavedExamsPage() {
                                             {exam.academyName}
                                         </span>
                                     )}
+                                    {exam.isStudentPublic && (
+                                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-black rounded flex items-center gap-1">
+                                            <Share2 className="w-2.5 h-2.5" /> 학생 공개
+                                        </span>
+                                    )}
                                 </div>
+
+                                {/* 학생 공개 오답노트 섹션 */}
+                                <div className="ml-6 mb-4 p-3 rounded-xl border border-slate-100 bg-slate-50/60">
+                                    <label className="flex items-center gap-2 cursor-pointer mb-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={exam.isStudentPublic}
+                                            onChange={(e) => updateExam(exam.id, { isStudentPublic: e.target.checked })}
+                                            className="w-4 h-4 accent-teal-600"
+                                        />
+                                        <span className="text-xs font-black text-slate-700 flex items-center gap-1">
+                                            <Share2 className="w-3 h-3" /> 학생 공개 링크 (오답노트)
+                                        </span>
+                                    </label>
+                                    {exam.isStudentPublic && exam.studentAccessSlug ? (
+                                        <>
+                                            <div className="flex items-center gap-1 mb-2">
+                                                <input
+                                                    type="text"
+                                                    value={publicUrl(exam.studentAccessSlug)}
+                                                    readOnly
+                                                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                    className="flex-1 min-w-0 px-2 py-1.5 text-[10px] font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-teal-400"
+                                                />
+                                                <button
+                                                    onClick={() => handleCopy(exam.id, exam.studentAccessSlug)}
+                                                    className="px-2 py-1.5 bg-teal-600 text-white rounded-lg text-[10px] font-black hover:bg-teal-700 flex items-center gap-1 shrink-0"
+                                                    title="복사"
+                                                >
+                                                    {copiedId === exam.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                                </button>
+                                                <a
+                                                    href={publicUrl(exam.studentAccessSlug)}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="px-2 py-1.5 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 shrink-0"
+                                                    title="새 탭"
+                                                >
+                                                    <ExternalLink className="w-3 h-3" />
+                                                </a>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <label className="text-[10px] font-black text-slate-500">디자인:</label>
+                                                <select
+                                                    value={exam.wrongNoteDesign}
+                                                    onChange={(e) => updateExam(exam.id, { wrongNoteDesign: e.target.value })}
+                                                    className="flex-1 px-2 py-1 text-[10px] font-bold bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-teal-400"
+                                                >
+                                                    <option value="oreum">오름 (청록)</option>
+                                                    <option value="mexx">MEXX (네이비)</option>
+                                                </select>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <p className="text-[10px] text-slate-500 leading-relaxed">
+                                            체크하면 학생용 URL이 생성됩니다.
+                                        </p>
+                                    )}
+                                </div>
+
                                 <div className="flex gap-2 ml-6">
                                     <Link
                                         href={`/exam-builder/preview/${exam.id}`}

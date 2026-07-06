@@ -77,6 +77,9 @@ export default function LandingPage() {
             <Link href="/admin/passages" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
               지문 관리
             </Link>
+            <Link href="/admin/questions" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
+              문제 관리
+            </Link>
             <Link href="/admin/grammar" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
               문법 카테고리
             </Link>
@@ -85,12 +88,6 @@ export default function LandingPage() {
             </Link>
             <Link href="/exam-builder" className="text-sm font-black text-teal-600 hover:text-teal-800 transition-colors flex items-center gap-1">
               📝 시험지 제작
-            </Link>
-            <Link href="/admin/rounds" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              회차 관리
-            </Link>
-            <Link href="/admin/academies" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              학원 관리
             </Link>
             <Link href="/admin/wrong-notes" className="text-sm font-black text-amber-600 hover:text-amber-800 transition-colors">
               📋 오답노트 요청
@@ -239,9 +236,11 @@ export default function LandingPage() {
                       </div>
                       <div className="aspect-[4/3] bg-slate-50 relative overflow-hidden flex items-center justify-center p-4">
                         <img src={q.imageUrl} alt="Question" className="max-w-full max-h-full object-contain group-hover:scale-105 transition-transform duration-500" />
-                        <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md text-white text-xs font-black rounded-lg shadow-xl">
-                          {q.questionNo}번
-                        </div>
+                        {q.sourceKey && (
+                          <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md text-white text-xs font-black rounded-lg shadow-xl font-mono">
+                            {q.sourceKey}
+                          </div>
+                        )}
                       </div>
                       <div className="p-6">
                         <div className="flex items-center gap-2 mb-3">

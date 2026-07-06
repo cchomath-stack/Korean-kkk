@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
                     { ocrText: { contains: t } },
                     { keywords: { contains: t } },
                     { difficulty: { equals: t } },
+                    { sourceKey: { contains: t } },
                     { tags: { some: { tag: { name: { contains: t } } } } },
                     { passage: { is: { area: { contains: t } } } },
                     { passage: { is: { ocrText: { contains: t } } } },

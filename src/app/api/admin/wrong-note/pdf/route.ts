@@ -49,23 +49,21 @@ export async function GET(request: NextRequest) {
 
     let browser: any = null;
     try {
-        // hydrated 데이터 로드
-        const req = await prisma.wrongNoteRequest.findUnique({
+        const submission = await prisma.wrongNoteSubmission.findUnique({
             where: { id: parseInt(id, 10) },
             include: {
-                academy: true,
-                round: true,
-                answers: { include: { roundItem: true } },
+                examSet: true,
+                answers: { include: { examItem: true } },
             },
         });
-        if (!req) return NextResponse.json({ error: '요청을 찾을 수 없습니다.' }, { status: 404 });
+        if (!submission) return NextResponse.json({ error: '요청을 찾을 수 없습니다.' }, { status: 404 });
 
-        const passageIds = req.answers
-            .filter(a => a.roundItem.kind === 'passage' && a.roundItem.passageId)
-            .map(a => a.roundItem.passageId!);
-        const questionIds = req.answers
-            .filter(a => a.roundItem.kind === 'question' && a.roundItem.questionId)
-            .map(a => a.roundItem.questionId!);
+        const passageIds = submission.answers
+            .filter(a => a.examItem.kind === 'passage' && a.examItem.passageId)
+            .map(a => a.examItem.passageId!);
+        const questionIds = submission.answers
+            .filter(a => a.examItem.kind === 'question' && a.examItem.questionId)
+            .map(a => a.examItem.questionId!);
 
         const [passages, questions] = await Promise.all([
             passageIds.length > 0
@@ -83,14 +81,14 @@ export async function GET(request: NextRequest) {
         ]);
         const pMap = new Map(passages.map(p => [p.id, p]));
         const qMap = new Map(questions.map(q => [q.id, q]));
-        const hydratedAnswers = req.answers
-            .sort((a, b) => a.roundItem.order - b.roundItem.order)
+        const hydratedAnswers = submission.answers
+            .sort((a, b) => a.examItem.order - b.examItem.order)
             .map(a => ({
                 ...a,
-                passage: a.roundItem.kind === 'passage' && a.roundItem.passageId ? pMap.get(a.roundItem.passageId) ?? null : null,
-                question: a.roundItem.kind === 'question' && a.roundItem.questionId ? qMap.get(a.roundItem.questionId) ?? null : null,
+                passage: a.examItem.kind === 'passage' && a.examItem.passageId ? pMap.get(a.examItem.passageId) ?? null : null,
+                question: a.examItem.kind === 'question' && a.examItem.questionId ? qMap.get(a.examItem.questionId) ?? null : null,
             }));
-        const hydrated = { ...req, answers: hydratedAnswers };
+        const hydrated = { ...submission, answers: hydratedAnswers };
 
         const [{ renderToStaticMarkup }, React, { WrongNotePaper }] = await Promise.all([
             import('react-dom/server'),
@@ -105,7 +103,7 @@ export async function GET(request: NextRequest) {
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>오답노트 — ${escapeHtml(req.studentName)}</title>
+<title>오답노트 — ${escapeHtml(submission.studentName)}</title>
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.6/dist/web/static/pretendard.min.css">
 <style>
 @page { size: A4; margin: 0; }
@@ -127,7 +125,7 @@ html, body { margin: 0; padding: 0; background: white; }
         await browser.close();
         browser = null;
 
-        const filename = `오답노트_${req.studentName.replace(/[\\/:*?"<>|]/g, '_')}_${req.id}.pdf`;
+        const filename = `오답노트_${submission.studentName.replace(/[\\/:*?"<>|]/g, '_')}_${submission.id}.pdf`;
         return new NextResponse(pdf, {
             status: 200,
             headers: {

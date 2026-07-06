@@ -1229,6 +1229,8 @@ function EditQuestionPanel({
 
     const [ocrText, setOcrText] = React.useState<string>(item.ocrText || '');
     const [questionNo, setQuestionNo] = React.useState<string>(item.questionNo?.toString() || '');
+    const [sourceKey, setSourceKey] = React.useState<string>(item.sourceKey || '');
+    const [imageNo, setImageNo] = React.useState<string>(item.imageNo?.toString() || '');
     const [answer, setAnswer] = React.useState<string>(item.answer || '');
     const [difficulty, setDifficulty] = React.useState<string>(item.difficulty || '');
     const [tags, setTags] = React.useState<string[]>(initialTags);
@@ -1266,9 +1268,19 @@ function EditQuestionPanel({
     const save = React.useCallback(async () => {
         setSaving(true);
         try {
+            // sourceKey 마지막 2자리에서 원본 문항번호(questionNo) 자동 추출.
+            // 예: m01231117 → 17. 형식이 안 맞으면 기존 questionNo 유지.
+            const trimmedKey = sourceKey.trim();
+            const keyMatch = /^m\d{2}\d{2}\d{2}(\d{2})$/.exec(trimmedKey);
+            const derivedQuestionNo = keyMatch ? keyMatch[1] : questionNo;
+
             const qBody: any = {
                 id: item.id,
-                ocrText, questionNo, answer, difficulty,
+                ocrText,
+                questionNo: derivedQuestionNo,
+                sourceKey: trimmedKey,
+                imageNo,
+                answer, difficulty,
                 tags, grammarCategoryIds: grammarIds,
             };
             // 단독 문제(passage 없음)일 때만 year/month/grade/area 를 Question 에 직접 저장
@@ -1331,7 +1343,9 @@ function EditQuestionPanel({
             onSaved({
                 ...item,
                 ocrText,
-                questionNo: questionNo ? parseInt(questionNo) : null,
+                questionNo: derivedQuestionNo ? parseInt(derivedQuestionNo) : null,
+                sourceKey: trimmedKey || null,
+                imageNo: imageNo ? parseInt(imageNo) : null,
                 answer, difficulty,
                 tags: (qUpdated.tags || []),
                 grammarCategories: (qUpdated.grammarCategories || []),
@@ -1355,7 +1369,7 @@ function EditQuestionPanel({
         } finally {
             setSaving(false);
         }
-    }, [item, ocrText, questionNo, answer, difficulty, tags, grammarIds, onSaved, hasPassage, year, month, grade, area]);
+    }, [item, ocrText, questionNo, sourceKey, imageNo, answer, difficulty, tags, grammarIds, onSaved, hasPassage, year, month, grade, area]);
 
     // Esc 닫기, Ctrl+S 저장
     React.useEffect(() => {
@@ -1408,7 +1422,7 @@ function EditQuestionPanel({
                     {/* 메타 — 항상 노출. 지문 있으면 지문에, 없으면 문항 자체에 저장 */}
                     <div className={`rounded-lg p-3 border ${hasPassage ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
                         <div className={`text-xs font-black mb-1 ${hasPassage ? 'text-blue-900' : 'text-amber-900'}`}>
-                            {hasPassage ? '지문 정보' : '문항 메타'} <span className={`font-medium ${hasPassage ? 'text-blue-700' : 'text-amber-700'}`}>
+                            {hasPassage ? '지문 정보' : '모고문제메타'} <span className={`font-medium ${hasPassage ? 'text-blue-700' : 'text-amber-700'}`}>
                                 {hasPassage ? '(이 지문의 모든 문제에 함께 적용됨)' : '(단독 문제 — 이 문항에만 적용)'}
                             </span>
                         </div>
@@ -1442,21 +1456,40 @@ function EditQuestionPanel({
                             </div>
                         </div>
 
-                    {/* 문제 메타 */}
+                    {/* 문제 번호 */}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="text-xs font-bold text-slate-500 block mb-1">번호</label>
-                            <input value={questionNo} onChange={(e) => setQuestionNo(e.target.value)} type="number"
-                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900" />
+                            <label className="text-xs font-bold text-slate-500 block mb-1">모고입력키워드</label>
+                            <input
+                                value={sourceKey}
+                                onChange={(e) => setSourceKey(e.target.value)}
+                                placeholder="m01231117"
+                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900 font-mono"
+                            />
+                            <p className="text-[10px] text-slate-400 mt-0.5">m + 학년(2) + 년(2) + 월(2) + 문항(2) — 예: 고1 23년 11월 17번 → <span className="font-mono">m01231117</span></p>
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-slate-500 block mb-1">난이도</label>
-                            <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}
-                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900 bg-white">
-                                <option value="">-</option>
-                                {DIFFS.map((d) => <option key={d} value={d}>{d}</option>)}
-                            </select>
+                            <label className="text-xs font-bold text-slate-500 block mb-1">이미지 문제번호</label>
+                            <input
+                                value={imageNo}
+                                onChange={(e) => setImageNo(e.target.value)}
+                                type="number"
+                                min={1}
+                                max={999}
+                                placeholder="1~999"
+                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900"
+                            />
+                            <p className="text-[10px] text-slate-400 mt-0.5">이미지 위에 적힌(교재상) 번호</p>
                         </div>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">난이도</label>
+                        <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900 bg-white">
+                            <option value="">-</option>
+                            {DIFFS.map((d) => <option key={d} value={d}>{d}</option>)}
+                        </select>
                     </div>
 
                     <div>

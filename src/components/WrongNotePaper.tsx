@@ -1,10 +1,11 @@
 import React from 'react';
 
-// 학생 오답노트 PDF 렌더러 — 시안 HTML 그대로 컴포넌트화 (MEXX / 오름 2종)
+// 학생 오답노트 PDF 렌더러 — 새 스키마 (WrongNoteSubmission + ExamItem 기반)
+// design은 data.examSet.wrongNoteDesign 사용
 
 export type HydratedAnswer = {
     id: number;
-    roundItem: {
+    examItem: {
         id: number;
         kind: 'passage' | 'question';
         order: number;
@@ -15,15 +16,20 @@ export type HydratedAnswer = {
     question: any | null;
 };
 
-export type WrongNoteRequestData = {
+export type WrongNoteSubmissionData = {
     id: number;
     studentName: string;
-    school: string | null;
-    grade: number | null;
-    design: string;
+    studentPhone: string | null;
+    studentAcademy: string | null;
     createdAt: string | Date;
-    academy: { id: number; name: string } | null;
-    round: { id: number; title: string; subTitle: string | null };
+    examSet: {
+        id: number;
+        title: string | null;
+        subTitle: string | null;
+        grade: number | null;
+        academyName: string | null;
+        wrongNoteDesign: string;
+    };
     answers: HydratedAnswer[];
 };
 
@@ -32,13 +38,12 @@ type FlatBlock =
     | { type: 'question'; imageUrl: string; displayNo: number; metaLine: string };
 
 // 답변 평탄화: 지문 → 그 지문에 속한 문제들, 단독 문제 → 그 문제
-function flattenAnswers(req: WrongNoteRequestData): FlatBlock[] {
+function flattenAnswers(data: WrongNoteSubmissionData): FlatBlock[] {
     const blocks: FlatBlock[] = [];
     let displayNo = 1;
 
-    for (const a of req.answers) {
-        if (a.roundItem.kind === 'passage' && a.passage) {
-            // 지문이 여러 조각(PassageImage[])으로 쪼개져 저장된 경우 모두 출력
+    for (const a of data.answers) {
+        if (a.examItem.kind === 'passage' && a.passage) {
             const passageImages: string[] = a.passage.images && a.passage.images.length > 0
                 ? a.passage.images.map((im: any) => im.imageUrl).filter(Boolean)
                 : (a.passage.imageUrl ? [a.passage.imageUrl] : []);
@@ -51,7 +56,6 @@ function flattenAnswers(req: WrongNoteRequestData): FlatBlock[] {
                 });
                 firstImage = false;
             }
-            // 지문에 속한 문제들 — 모두 출력 (학생이 그 지문의 일부만 틀려도 지문은 통째로 보여줘야 풀이 가능)
             const questions = a.passage.questions || [];
             for (const q of questions) {
                 blocks.push({
@@ -61,7 +65,7 @@ function flattenAnswers(req: WrongNoteRequestData): FlatBlock[] {
                     metaLine: questionMeta(q, a.passage),
                 });
             }
-        } else if (a.roundItem.kind === 'question' && a.question) {
+        } else if (a.examItem.kind === 'question' && a.question) {
             blocks.push({
                 type: 'question',
                 imageUrl: a.question.imageUrl,
@@ -101,17 +105,22 @@ function fmtDate(d: string | Date): string {
 }
 
 // ====== 메인 컴포넌트 — design 분기 ======
-export function WrongNotePaper({ data, logoUrls }: { data: WrongNoteRequestData; logoUrls?: { mexxWhite?: string; mexxNavy?: string } }) {
-    if (data.design === 'mexx') return <MexxPaper data={data} logoUrls={logoUrls} />;
+export function WrongNotePaper({ data, logoUrls }: { data: WrongNoteSubmissionData; logoUrls?: { mexxWhite?: string; mexxNavy?: string } }) {
+    if (data.examSet.wrongNoteDesign === 'mexx') return <MexxPaper data={data} logoUrls={logoUrls} />;
     return <OreumPaper data={data} />;
 }
 
+// 표지에 표시할 시험지 제목
+function examTitle(data: WrongNoteSubmissionData): string {
+    return data.examSet.title || '오답노트';
+}
+
 // ====== MEXX 디자인 ======
-function MexxPaper({ data, logoUrls }: { data: WrongNoteRequestData; logoUrls?: { mexxWhite?: string; mexxNavy?: string } }) {
+function MexxPaper({ data, logoUrls }: { data: WrongNoteSubmissionData; logoUrls?: { mexxWhite?: string; mexxNavy?: string } }) {
     const blocks = flattenAnswers(data);
     const totalWrong = data.answers.length;
-    const academyName = data.academy?.name || '';
-    const schoolGrade = [data.school, data.grade && `${data.grade}학년`].filter(Boolean).join(' ');
+    const academyLabel = data.studentAcademy || data.examSet.academyName || '';
+    const studentSub = data.examSet.grade ? `고${data.examSet.grade}` : '';
 
     return (
         <div className="wn-root mexx">
@@ -126,14 +135,14 @@ function MexxPaper({ data, logoUrls }: { data: WrongNoteRequestData; logoUrls?: 
                 <div className="cover">
                     <div>
                         <div className="eyebrow">오답노트</div>
-                        <h1>{data.round.title}</h1>
-                        {data.round.subTitle && <div className="round-sub">{data.round.subTitle}</div>}
+                        <h1>{examTitle(data)}</h1>
+                        {data.examSet.subTitle && <div className="round-sub">{data.examSet.subTitle}</div>}
                         <hr />
                         <div className="meta-grid three">
                             <div>
                                 <div className="field-label">학생</div>
                                 <div className="field-value">{data.studentName}</div>
-                                {schoolGrade && <div className="field-value-sub">{schoolGrade}</div>}
+                                {studentSub && <div className="field-value-sub">{studentSub}</div>}
                             </div>
                             <div>
                                 <div className="field-label">틀린 문제</div>
@@ -145,10 +154,10 @@ function MexxPaper({ data, logoUrls }: { data: WrongNoteRequestData; logoUrls?: 
                             </div>
                         </div>
                     </div>
-                    {academyName && (
+                    {academyLabel && (
                         <div className="academy-block">
                             <hr />
-                            <div className="value">{academyName}</div>
+                            <div className="value">{academyLabel}</div>
                         </div>
                     )}
                 </div>
@@ -213,11 +222,11 @@ function FooterMexx({ logoUrl, pageNo, pageTotal }: { logoUrl?: string; pageNo: 
 }
 
 // ====== 오름 디자인 ======
-function OreumPaper({ data }: { data: WrongNoteRequestData }) {
+function OreumPaper({ data }: { data: WrongNoteSubmissionData }) {
     const blocks = flattenAnswers(data);
     const totalWrong = data.answers.length;
-    const academyName = data.academy?.name || '';
-    const schoolGrade = [data.school, data.grade && `${data.grade}학년`].filter(Boolean).join(' ');
+    const academyLabel = data.studentAcademy || data.examSet.academyName || '';
+    const studentSub = data.examSet.grade ? `고${data.examSet.grade}` : '';
 
     return (
         <div className="wn-root oreum">
@@ -238,14 +247,14 @@ function OreumPaper({ data }: { data: WrongNoteRequestData }) {
                     </svg>
                     <div>
                         <span className="eyebrow-pill">오답노트</span>
-                        <h1>{data.round.title}</h1>
-                        {data.round.subTitle && <div className="round-sub">{data.round.subTitle}</div>}
+                        <h1>{examTitle(data)}</h1>
+                        {data.examSet.subTitle && <div className="round-sub">{data.examSet.subTitle}</div>}
                         <div className="meta-card">
                             <div className="meta-grid">
                                 <div>
                                     <div className="field-label">학생</div>
                                     <div className="field-value">{data.studentName}</div>
-                                    {schoolGrade && <div className="field-value-sub">{schoolGrade}</div>}
+                                    {studentSub && <div className="field-value-sub">{studentSub}</div>}
                                 </div>
                                 <div>
                                     <div className="field-label">틀린 문제</div>
@@ -258,12 +267,12 @@ function OreumPaper({ data }: { data: WrongNoteRequestData }) {
                             </div>
                         </div>
                     </div>
-                    {academyName && (
+                    {academyLabel && (
                         <div className="academy-block">
                             <hr />
                             <div className="row">
                                 <span className="badge">학원</span>
-                                <span className="value">{academyName}</span>
+                                <span className="value">{academyLabel}</span>
                             </div>
                         </div>
                     )}

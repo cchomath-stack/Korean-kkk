@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
         const {
             passageId, imageUrl, ocrText,
             keywords, answer, difficulty, questionNo,
+            sourceKey, imageNo,
             year, month, grade, area, // 단독 문제용 메타
             tags, // string[]
             grammarCategoryIds, // number[]
@@ -37,6 +38,8 @@ export async function POST(request: NextRequest) {
                 answer,
                 difficulty,
                 questionNo: toIntOrNull(questionNo),
+                sourceKey: sourceKey ? String(sourceKey).trim() || null : null,
+                imageNo: toIntOrNull(imageNo),
                 year: toIntOrNull(year),
                 month: toIntOrNull(month),
                 grade: toIntOrNull(grade),
@@ -93,8 +96,8 @@ export async function PUT(request: NextRequest) {
         if (!id) return NextResponse.json({ error: 'ID가 필요합니다.' }, { status: 400 });
         const qid = parseInt(String(id), 10);
 
-        const allowed = ['ocrText', 'answer', 'difficulty', 'questionNo', 'keywords', 'year', 'month', 'grade', 'area'] as const;
-        const intFields = new Set(['questionNo', 'year', 'month', 'grade']);
+        const allowed = ['ocrText', 'answer', 'difficulty', 'questionNo', 'sourceKey', 'imageNo', 'keywords', 'year', 'month', 'grade', 'area'] as const;
+        const intFields = new Set(['questionNo', 'imageNo', 'year', 'month', 'grade']);
         const data: any = {};
         for (const k of allowed) {
             if (k in rest) {

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import {
-    Home, BookOpen, Loader2, Plus, Trash2, Save, X, Edit2,
+    Home, BookOpen, Loader2, Plus, Trash2, Save, X, Edit2, FileText,
 } from 'lucide-react';
 
 type TreeChild = { id: number; name: string; order: number; count: number };
@@ -127,6 +127,12 @@ export default function GrammarAdminPage() {
                     <BookOpen size={16} /> 문법(어법) 카테고리 관리
                 </h1>
                 <span className="text-xs text-slate-400 font-medium">대분류 → 소분류 (2단계)</span>
+                <Link
+                    href="/admin/questions"
+                    className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded bg-teal-600 text-white hover:bg-teal-700"
+                >
+                    <FileText size={13} /> 전체 문제 관리
+                </Link>
             </header>
 
             <main className="max-w-4xl mx-auto p-6">
@@ -162,6 +168,10 @@ export default function GrammarAdminPage() {
                                                 <span className="text-xs font-medium text-slate-400">· 하위 {root.children.length}개</span>
                                             </h2>
                                             <div className="ml-auto flex items-center gap-1">
+                                                <Link href={`/admin/questions?grammar=${root.id}`}
+                                                    className="flex items-center gap-1 px-2 py-1 rounded bg-teal-50 hover:bg-teal-100 text-teal-700 text-[11px] font-bold" title="이 카테고리 문제 보기">
+                                                    <FileText size={11} /> 문제 {root.count}
+                                                </Link>
                                                 <button onClick={() => startEdit(root.id, root.name)}
                                                     className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-teal-700" title="이름 수정">
                                                     <Edit2 size={14} />
@@ -202,6 +212,12 @@ export default function GrammarAdminPage() {
                                                         {child.count > 0 ? `· 문제 ${child.count}` : ''}
                                                     </span>
                                                     <div className="ml-auto flex items-center gap-1">
+                                                        {child.count > 0 && (
+                                                            <Link href={`/admin/questions?grammar=${child.id}`}
+                                                                className="flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 hover:bg-teal-100 text-teal-700 text-[10px] font-bold" title="이 카테고리 문제 보기">
+                                                                <FileText size={10} /> 문제 {child.count}
+                                                            </Link>
+                                                        )}
                                                         <button onClick={() => startEdit(child.id, child.name)}
                                                             className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-teal-700">
                                                             <Edit2 size={12} />

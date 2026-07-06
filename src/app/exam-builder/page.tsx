@@ -24,6 +24,7 @@ import {
     ChevronLeft, GripVertical, Trash2, FileText, BookOpen,
     Eye, Save, FileDown, Loader2, AlertCircle, X, Search, Plus, Check,
     Crop, ZoomIn, ZoomOut, AlignLeft, AlignCenter, AlignRight, RotateCcw,
+    Share2, Copy, ExternalLink,
 } from 'lucide-react';
 import { AddToCartButton, useExamCart } from '@/components/ExamCart';
 import { ImageAdjustModal } from '@/components/ImageAdjustModal';
@@ -54,6 +55,9 @@ type HydratedExam = {
     durationMin: number | null;
     totalScore: number | null;
     status: string;
+    isStudentPublic: boolean;
+    studentAccessSlug: string | null;
+    wrongNoteDesign: string;
     items: HydratedItem[];
 };
 
@@ -263,6 +267,8 @@ export default function ExamBuilderPage() {
                             </p>
                         )}
                     </div>
+                    <StudentPublicCard exam={exam} updateMeta={updateMeta} />
+
                     <SearchPanel examSetId={exam.id} onAdded={fetchExam} />
 
                     <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
@@ -689,6 +695,91 @@ function SearchPanel({ examSetId, onAdded }: { examSetId: number; onAdded: () =>
                         <button onClick={() => setChoice(null)} className="w-full mt-4 px-4 py-2 text-sm text-slate-500 hover:text-slate-700 font-bold">취소</button>
                     </div>
                 </div>
+            )}
+        </div>
+    );
+}
+
+function StudentPublicCard({ exam, updateMeta }: { exam: HydratedExam; updateMeta: (patch: Partial<HydratedExam>) => Promise<void> }) {
+    const [copied, setCopied] = useState(false);
+    const publicUrl = typeof window !== 'undefined' && exam.studentAccessSlug
+        ? `${window.location.origin}/student/exam/${exam.studentAccessSlug}`
+        : '';
+
+    const handleCopy = async () => {
+        if (!publicUrl) return;
+        try {
+            await navigator.clipboard.writeText(publicUrl);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        } catch {
+            alert(publicUrl);
+        }
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+            <h2 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Share2 className="w-4 h-4" />학생 공개 (오답노트)
+            </h2>
+            <label className="flex items-center gap-3 cursor-pointer mb-3">
+                <input
+                    type="checkbox"
+                    checked={exam.isStudentPublic}
+                    onChange={(e) => updateMeta({ isStudentPublic: e.target.checked } as any)}
+                    className="w-5 h-5 accent-teal-600"
+                />
+                <span className="text-sm font-bold text-slate-700">
+                    이 시험지의 학생 공개 링크 켜기
+                </span>
+            </label>
+            {exam.isStudentPublic && exam.studentAccessSlug ? (
+                <>
+                    <div className="flex items-center gap-2 mb-3">
+                        <input
+                            type="text"
+                            value={publicUrl}
+                            readOnly
+                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                            className="flex-1 min-w-0 px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-teal-400"
+                        />
+                        <button
+                            onClick={handleCopy}
+                            className="px-3 py-2 bg-teal-600 text-white rounded-lg text-xs font-black hover:bg-teal-700 flex items-center gap-1 shrink-0"
+                            title="복사"
+                        >
+                            {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            {copied ? '복사됨' : '복사'}
+                        </button>
+                        <a
+                            href={publicUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-black hover:bg-slate-200 flex items-center gap-1 shrink-0"
+                            title="새 탭"
+                        >
+                            <ExternalLink className="w-3 h-3" />
+                        </a>
+                    </div>
+                    <div className="mb-2">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">오답노트 디자인</label>
+                        <select
+                            value={exam.wrongNoteDesign}
+                            onChange={(e) => updateMeta({ wrongNoteDesign: e.target.value } as any)}
+                            className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-teal-400"
+                        >
+                            <option value="oreum">오름 (청록)</option>
+                            <option value="mexx">MEXX (네이비)</option>
+                        </select>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">
+                        학생이 이 링크로 접속해 <strong>이름·전화·학원(반)</strong>을 입력하고 <strong>틀린 문제</strong>를 체크해서 제출하면 <Link href="/admin/wrong-notes" className="text-teal-600 font-bold underline">오답노트 요청</Link>에 쌓입니다.
+                    </p>
+                </>
+            ) : (
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                    링크를 켜면 학생이 접속할 수 있는 URL이 생성됩니다. 학생은 이름과 학원(반)을 입력하고 틀린 문제를 체크한 뒤 제출합니다.
+                </p>
             )}
         </div>
     );
