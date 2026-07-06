@@ -2,9 +2,10 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Save, Scissors, Type, Home } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Save, Scissors, Type, Home, Image as ImageIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AddToCartButton } from '@/components/ExamCart';
+import { QuestionImageEditor } from '@/components/QuestionImageEditor';
 
 export default function AdminPage() {
     const [stage, setStage] = useState<'PASSAGE' | 'QUESTION'>('PASSAGE');
@@ -1276,6 +1277,8 @@ function EditQuestionPanel({
 
     const [saving, setSaving] = React.useState(false);
     const [savedToast, setSavedToast] = React.useState(false);
+    const [imageUrl, setImageUrl] = React.useState<string>(item.imageUrl);
+    const [imageEditorOpen, setImageEditorOpen] = React.useState(false);
 
     const toggleGrammar = (id: number) => {
         setGrammarIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
@@ -1442,9 +1445,17 @@ function EditQuestionPanel({
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                    {/* 이미지 미리보기 */}
-                    <div className="bg-slate-50 rounded-lg p-2 border border-slate-200">
-                        <img src={item.imageUrl} alt="" className="w-full max-h-96 object-contain" />
+                    {/* 이미지 미리보기 + 편집 */}
+                    <div className="bg-slate-50 rounded-lg p-2 border border-slate-200 relative">
+                        <img src={imageUrl} alt="" className="w-full max-h-96 object-contain" />
+                        <button
+                            type="button"
+                            onClick={() => setImageEditorOpen(true)}
+                            className="absolute top-3 right-3 flex items-center gap-1 px-2.5 py-1.5 bg-white/95 border border-slate-200 rounded shadow hover:bg-slate-100 text-xs font-black text-slate-700"
+                            title="자르기 / 다시 올리기"
+                        >
+                            <ImageIcon size={13} /> 이미지 편집
+                        </button>
                     </div>
 
                     {/* 메타 — 항상 노출. 지문 있으면 지문에, 없으면 문항 자체에 저장 */}
@@ -1623,6 +1634,19 @@ function EditQuestionPanel({
                     </button>
                 </div>
             </div>
+            {imageEditorOpen && (
+                <QuestionImageEditor
+                    questionId={item.id}
+                    imageUrl={imageUrl}
+                    onChanged={(newUrl) => {
+                        setImageUrl(newUrl);
+                        setImageEditorOpen(false);
+                        // 갤러리 카드도 새 URL로 갱신
+                        onSaved({ ...item, imageUrl: newUrl });
+                    }}
+                    onClose={() => setImageEditorOpen(false)}
+                />
+            )}
         </div>
     );
 }

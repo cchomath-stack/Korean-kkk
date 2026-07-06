@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Home, Loader2, ChevronLeft, ChevronRight, Save, X, Search, FileText, Filter,
-    ArrowUpDown, Edit2,
+    ArrowUpDown, Edit2, ImageIcon,
 } from 'lucide-react';
+import { QuestionImageEditor } from '@/components/QuestionImageEditor';
 
 type Q = {
     id: number;
@@ -325,6 +326,8 @@ export function QuestionEditModal({
         ocrText: initial.ocrText || '',
     });
     const [saving, setSaving] = useState(false);
+    const [imageUrl, setImageUrl] = useState<string>(initial.imageUrl || '');
+    const [imageEditorOpen, setImageEditorOpen] = useState(false);
 
     const handleSave = async () => {
         setSaving(true);
@@ -365,6 +368,20 @@ export function QuestionEditModal({
                     <h2 className="font-black text-slate-900">문제 #{initial.id} 편집</h2>
                     <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-700"><X size={18} /></button>
                 </div>
+
+                {/* 이미지 미리보기 + 편집 */}
+                <div className="mb-4 bg-slate-50 rounded-lg p-2 border border-slate-200 relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={imageUrl} alt="" className="w-full max-h-64 object-contain" />
+                    <button
+                        type="button"
+                        onClick={() => setImageEditorOpen(true)}
+                        className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 bg-white/95 border border-slate-200 rounded shadow hover:bg-slate-100 text-xs font-black text-slate-700"
+                    >
+                        <ImageIcon size={12} /> 이미지 편집
+                    </button>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3 mb-4">
                             <div>
                                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">모고입력키워드</label>
@@ -433,6 +450,18 @@ export function QuestionEditModal({
                     </button>
                 </div>
             </div>
+            {imageEditorOpen && (
+                <QuestionImageEditor
+                    questionId={initial.id}
+                    imageUrl={imageUrl}
+                    onChanged={(newUrl) => {
+                        setImageUrl(newUrl);
+                        setImageEditorOpen(false);
+                        onSaved();
+                    }}
+                    onClose={() => setImageEditorOpen(false)}
+                />
+            )}
         </div>
     );
 }
