@@ -1251,6 +1251,28 @@ function EditQuestionPanel({
     const [area, setArea] = React.useState<string>(
         (hasPassage ? item.passage?.area : item.area) || ''
     );
+    // '이 문제는 모고 문제가 아님' → 메타 필드 비활성 + sourceKey 자동 조립 중지
+    const [skipMockMeta, setSkipMockMeta] = React.useState<boolean>(
+        !year && !month && !grade && !sourceKey
+    );
+
+    // year/month/grade 가 채워지면 sourceKey 앞 8자리(m + gg + yy + mm)를 자동 조립.
+    // 마지막 2자리(문항번호)는 기존 sourceKey 값 유지.
+    React.useEffect(() => {
+        if (skipMockMeta) return;
+        const yy = /^\d{4}$/.test(year) ? year.slice(2) : (year.length === 2 ? year : '');
+        const mm = month ? String(parseInt(month, 10)).padStart(2, '0') : '';
+        const gg = grade ? String(parseInt(grade, 10)).padStart(2, '0') : '';
+        if (!yy || !mm || !gg) return;
+        const prefix = `m${gg}${yy}${mm}`;
+        const existing = sourceKey.trim();
+        // 기존 sourceKey에서 마지막 2자리 추출 (m + 6자리 + 2자리 패턴)
+        const m = /^m\d{6}(\d{2})$/.exec(existing);
+        const suffix = m ? m[1] : '';
+        const next = prefix + suffix;
+        if (next !== existing) setSourceKey(next);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [year, month, grade, skipMockMeta]);
 
     const [saving, setSaving] = React.useState(false);
     const [savedToast, setSavedToast] = React.useState(false);
@@ -1268,27 +1290,33 @@ function EditQuestionPanel({
     const save = React.useCallback(async () => {
         setSaving(true);
         try {
+            // '생략' 체크는 단독 문제(!hasPassage)에서만 유효. 지문 문제는 지문 메타를 그대로 씀.
+            const skip = !hasPassage && skipMockMeta;
+            const effectiveSourceKey = skip ? '' : sourceKey.trim();
+            const effectiveYear = skip ? '' : year;
+            const effectiveMonth = skip ? '' : month;
+            const effectiveGrade = skip ? '' : grade;
+            const effectiveArea = skip ? '' : area;
+
             // sourceKey 마지막 2자리에서 원본 문항번호(questionNo) 자동 추출.
-            // 예: m01231117 → 17. 형식이 안 맞으면 기존 questionNo 유지.
-            const trimmedKey = sourceKey.trim();
-            const keyMatch = /^m\d{2}\d{2}\d{2}(\d{2})$/.exec(trimmedKey);
-            const derivedQuestionNo = keyMatch ? keyMatch[1] : questionNo;
+            const keyMatch = /^m\d{2}\d{2}\d{2}(\d{2})$/.exec(effectiveSourceKey);
+            const derivedQuestionNo = keyMatch ? keyMatch[1] : (skip ? '' : questionNo);
 
             const qBody: any = {
                 id: item.id,
                 ocrText,
                 questionNo: derivedQuestionNo,
-                sourceKey: trimmedKey,
+                sourceKey: effectiveSourceKey,
                 imageNo,
                 answer, difficulty,
                 tags, grammarCategoryIds: grammarIds,
             };
             // 단독 문제(passage 없음)일 때만 year/month/grade/area 를 Question 에 직접 저장
             if (!hasPassage) {
-                qBody.year = year;
-                qBody.month = month;
-                qBody.grade = grade;
-                qBody.area = area;
+                qBody.year = effectiveYear;
+                qBody.month = effectiveMonth;
+                qBody.grade = effectiveGrade;
+                qBody.area = effectiveArea;
             }
 
             // 1) 문제 저장
@@ -1334,17 +1362,17 @@ function EditQuestionPanel({
                 }
             }
 
-            const parsedYear = year === '' ? null : parseInt(year);
-            const parsedMonth = month === '' ? null : parseInt(month);
-            const parsedGrade = grade === '' ? null : parseInt(grade);
-            const parsedArea = area || null;
+            const parsedYear = effectiveYear === '' ? null : parseInt(effectiveYear);
+            const parsedMonth = effectiveMonth === '' ? null : parseInt(effectiveMonth);
+            const parsedGrade = effectiveGrade === '' ? null : parseInt(effectiveGrade);
+            const parsedArea = effectiveArea || null;
 
             // 정규화 — 갤러리 카드용 형태 유지
             onSaved({
                 ...item,
                 ocrText,
                 questionNo: derivedQuestionNo ? parseInt(derivedQuestionNo) : null,
-                sourceKey: trimmedKey || null,
+                sourceKey: effectiveSourceKey || null,
                 imageNo: imageNo ? parseInt(imageNo) : null,
                 answer, difficulty,
                 tags: (qUpdated.tags || []),
@@ -1369,7 +1397,7 @@ function EditQuestionPanel({
         } finally {
             setSaving(false);
         }
-    }, [item, ocrText, questionNo, sourceKey, imageNo, answer, difficulty, tags, grammarIds, onSaved, hasPassage, year, month, grade, area]);
+    }, [item, ocrText, questionNo, sourceKey, imageNo, answer, difficulty, tags, grammarIds, onSaved, hasPassage, year, month, grade, area, skipMockMeta]);
 
     // Esc 닫기, Ctrl+S 저장
     React.useEffect(() => {
@@ -1420,36 +1448,53 @@ function EditQuestionPanel({
                     </div>
 
                     {/* 메타 — 항상 노출. 지문 있으면 지문에, 없으면 문항 자체에 저장 */}
-                    <div className={`rounded-lg p-3 border ${hasPassage ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
-                        <div className={`text-xs font-black mb-1 ${hasPassage ? 'text-blue-900' : 'text-amber-900'}`}>
-                            {hasPassage ? '지문 정보' : '모고문제메타'} <span className={`font-medium ${hasPassage ? 'text-blue-700' : 'text-amber-700'}`}>
-                                {hasPassage ? '(이 지문의 모든 문제에 함께 적용됨)' : '(단독 문제 — 이 문항에만 적용)'}
+                    <div className={`rounded-lg p-3 border ${hasPassage ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'} ${skipMockMeta ? 'opacity-60' : ''}`}>
+                        <div className={`text-xs font-black mb-1 flex items-center gap-2 ${hasPassage ? 'text-blue-900' : 'text-amber-900'}`}>
+                            <span>
+                                {hasPassage ? '지문 정보' : '모고문제메타'} <span className={`font-medium ${hasPassage ? 'text-blue-700' : 'text-amber-700'}`}>
+                                    {hasPassage ? '(이 지문의 모든 문제에 함께 적용됨)' : '(단독 문제 — 이 문항에만 적용)'}
+                                </span>
                             </span>
+                            {!hasPassage && (
+                                <label className="ml-auto flex items-center gap-1 text-[10px] font-bold text-amber-800 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={skipMockMeta}
+                                        onChange={(e) => setSkipMockMeta(e.target.checked)}
+                                        className="accent-amber-600"
+                                    />
+                                    생략 (모고 문제 아님)
+                                </label>
+                            )}
                         </div>
                             <div className="grid grid-cols-4 gap-2 mt-2">
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 block mb-0.5">연도</label>
                                     <input value={year} onChange={(e) => setYear(e.target.value)} type="number" placeholder="2025"
-                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white" />
+                                        disabled={skipMockMeta}
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white disabled:bg-slate-100 disabled:cursor-not-allowed" />
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 block mb-0.5">월</label>
                                     <input value={month} onChange={(e) => setMonth(e.target.value)} type="number" placeholder="9"
-                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white" />
+                                        disabled={skipMockMeta}
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white disabled:bg-slate-100 disabled:cursor-not-allowed" />
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 block mb-0.5">학년</label>
                                     <select value={grade} onChange={(e) => setGrade(e.target.value)}
-                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white">
-                                        <option value="">-</option>
+                                        disabled={skipMockMeta}
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white disabled:bg-slate-100 disabled:cursor-not-allowed">
+                                        <option value="">미정</option>
                                         {GRADES.map((g) => <option key={g} value={g}>{g}학년</option>)}
                                     </select>
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-500 block mb-0.5">영역</label>
                                     <select value={area} onChange={(e) => setArea(e.target.value)}
-                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white">
-                                        <option value="">-</option>
+                                        disabled={skipMockMeta}
+                                        className="w-full px-2 py-1 border border-slate-300 rounded text-sm text-slate-900 bg-white disabled:bg-slate-100 disabled:cursor-not-allowed">
+                                        <option value="">미정</option>
                                         {AREAS.map((a) => <option key={a} value={a}>{a}</option>)}
                                     </select>
                                 </div>
@@ -1463,8 +1508,9 @@ function EditQuestionPanel({
                             <input
                                 value={sourceKey}
                                 onChange={(e) => setSourceKey(e.target.value)}
-                                placeholder="m01231117"
-                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900 font-mono"
+                                placeholder={skipMockMeta ? '(모고 문제 아님)' : '위 메타 선택 후 마지막 2자리(문항)만 입력'}
+                                disabled={skipMockMeta}
+                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900 font-mono disabled:bg-slate-100 disabled:cursor-not-allowed"
                             />
                             <p className="text-[10px] text-slate-400 mt-0.5">m + 학년(2) + 년(2) + 월(2) + 문항(2) — 예: 고1 23년 11월 17번 → <span className="font-mono">m01231117</span></p>
                         </div>
@@ -1526,7 +1572,9 @@ function EditQuestionPanel({
 
                     {/* 문법 카테고리 */}
                     <div className="border-t pt-4">
-                        <label className="text-xs font-bold text-slate-500 block mb-2">문법(어법) 카테고리</label>
+                        <label className="text-xs font-bold text-slate-500 block mb-2">
+                            문법(어법) 카테고리 <span className="font-medium text-slate-400">(해당될 경우)</span>
+                        </label>
                         {grammarTree.length === 0 ? (
                             <div className="text-xs text-slate-400">카테고리가 없습니다.</div>
                         ) : (
