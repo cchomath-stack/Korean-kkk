@@ -1,10 +1,61 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Search, FileText, ChevronRight, Loader2, Info } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, FileText, ChevronRight, Loader2, Info, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { AddToCartButton } from '@/components/ExamCart';
+
+// 드롭다운 메뉴 — 클릭 오픈, 바깥 클릭 시 닫힘
+function NavDropdown({ label, items, accent = 'slate' }: {
+  label: string;
+  items: { href: string; label: string; hint?: string }[];
+  accent?: 'slate' | 'teal' | 'amber';
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const labelColor =
+    accent === 'teal' ? 'text-teal-600 hover:text-teal-800'
+    : accent === 'amber' ? 'text-amber-600 hover:text-amber-800'
+    : 'text-slate-800 hover:text-teal-600';
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`text-sm font-bold transition-colors flex items-center gap-0.5 ${labelColor} ${open ? 'text-teal-600' : ''}`}
+      >
+        {label}
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute top-full right-0 mt-2 min-w-52 bg-white border border-slate-200 rounded-2xl shadow-xl p-2 z-50">
+          {items.map(it => (
+            <Link
+              key={it.href}
+              href={it.href}
+              onClick={() => setOpen(false)}
+              className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm font-bold text-slate-800 hover:text-teal-700"
+            >
+              <div>{it.label}</div>
+              {it.hint && <div className="text-[10px] font-medium text-slate-400 mt-0.5">{it.hint}</div>}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function LandingPage() {
   const [query, setQuery] = useState('');
@@ -63,35 +114,28 @@ export default function LandingPage() {
         <Link href="/help" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
           사용설명서
         </Link>
-        <Link href="/grammar" className="text-sm font-bold text-purple-700 hover:text-purple-900 transition-colors">
-          문법문제 찾기
-        </Link>
-        <Link href="/admin/stats" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-          통계
-        </Link>
         {me?.role === 'ADMIN' && (
           <>
-            <Link href="/admin/bulk" className="text-sm font-bold text-teal-700 hover:text-teal-900 transition-colors">
-              PDF 일괄입력
-            </Link>
-            <Link href="/admin/passages" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              지문 관리
-            </Link>
-            <Link href="/admin/questions" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              문제 관리
-            </Link>
-            <Link href="/admin/grammar" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              문법 카테고리
-            </Link>
-            <Link href="/admin" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
-              데이터 관리
-            </Link>
-            <Link href="/exam-builder" className="text-sm font-black text-teal-600 hover:text-teal-800 transition-colors flex items-center gap-1">
-              📝 시험지 제작
-            </Link>
-            <Link href="/admin/wrong-notes" className="text-sm font-black text-amber-600 hover:text-amber-800 transition-colors">
-              📋 오답노트 요청
-            </Link>
+            <NavDropdown
+              label="데이터관리"
+              items={[
+                { href: '/admin', label: '데이터 입력', hint: 'PDF → 박스 → 메타' },
+                { href: '/admin/bulk', label: 'PDF 일괄입력', hint: '여러 PDF 한 번에' },
+                { href: '/admin/passages', label: '지문 관리', hint: '지문 목록·수정' },
+                { href: '/admin/questions', label: '문제 관리', hint: '문제 목록·수정·이미지 편집' },
+                { href: '/admin/grammar', label: '문법 카테고리', hint: '카테고리 트리 편집' },
+                { href: '/admin/stats', label: '통계', hint: '입력 현황' },
+              ]}
+            />
+            <NavDropdown
+              label="📝 시험지"
+              accent="teal"
+              items={[
+                { href: '/exam-builder', label: '시험지 만들기', hint: '문항 담고 출제' },
+                { href: '/exam-builder/saved', label: '저장된 시험지', hint: '이전 시험지 다시 보기' },
+                { href: '/admin/wrong-notes', label: '📋 오답노트 요청', hint: '학생 제출 → PDF' },
+              ]}
+            />
             <Link href="/admin/users" className="text-sm font-bold text-slate-800 hover:text-teal-600 transition-colors">
               회원 관리
             </Link>
