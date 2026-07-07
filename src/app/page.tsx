@@ -119,7 +119,7 @@ export default function LandingPage() {
             <NavDropdown
               label="데이터관리"
               items={[
-                { href: '/admin', label: '데이터 입력', hint: 'PDF → 박스 → 메타' },
+                { href: '/admin', label: '입력 및 관리', hint: 'PDF 입력 · 영역/문법 필터 갤러리' },
                 { href: '/admin/bulk', label: 'PDF 일괄입력', hint: '여러 PDF 한 번에' },
                 { href: '/admin/passages', label: '지문 관리', hint: '지문 목록·수정' },
                 { href: '/admin/questions', label: '문제 관리', hint: '문제 목록·수정·이미지 편집' },

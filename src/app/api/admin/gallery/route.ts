@@ -14,11 +14,37 @@ export async function GET(request: NextRequest) {
         const cursor = cursorParam ? parseInt(cursorParam, 10) : null;
         const yearParam = searchParams.get('year');
         const year = yearParam ? parseInt(yearParam, 10) : null;
+        const area = (searchParams.get('area') || '').trim();
+        const categoryIdsParam = searchParams.get('categoryIds') || '';
+        const categoryIds = categoryIdsParam
+            .split(',')
+            .map(s => parseInt(s, 10))
+            .filter(n => !Number.isNaN(n));
 
-        const where: any = {};
+        // 문항(Question) 필터: area/year는 지문 or 문항 어느 쪽이든 매칭.
+        const ands: any[] = [];
         if (year && !Number.isNaN(year)) {
-            where.passage = { is: { year } };
+            ands.push({
+                OR: [
+                    { year },
+                    { passage: { is: { year } } },
+                ],
+            });
         }
+        if (area) {
+            ands.push({
+                OR: [
+                    { area },
+                    { passage: { is: { area } } },
+                ],
+            });
+        }
+        if (categoryIds.length > 0) {
+            ands.push({
+                grammarCategories: { some: { categoryId: { in: categoryIds } } },
+            });
+        }
+        const where: any = ands.length > 0 ? { AND: ands } : {};
 
         const questions = await prisma.question.findMany({
             where,

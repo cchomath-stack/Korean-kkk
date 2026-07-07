@@ -58,9 +58,11 @@ export default function AdminPage() {
         }, 0);
     };
 
-    // 갤러리 상태 (무한스크롤 + 연도 필터)
+    // 갤러리 상태 (무한스크롤 + 연도/영역/문법카테고리 필터)
     const [yearFilter, setYearFilter] = useState('');
     const [debouncedYear, setDebouncedYear] = useState('');
+    const [areaFilter, setAreaFilter] = useState<string>(''); // '' | 문법 | 독서 | 문학 | 화작 | 언매
+    const [gcFilter, setGcFilter] = useState<Set<number>>(new Set()); // 선택된 grammar category ids
     const [galleryCursor, setGalleryCursor] = useState<number | null>(null);
     const [galleryHasMore, setGalleryHasMore] = useState(false);
     const [galleryLoading, setGalleryLoading] = useState(false);
@@ -79,6 +81,8 @@ export default function AdminPage() {
             const params = new URLSearchParams();
             if (cursor) params.set('cursor', String(cursor));
             if (debouncedYear) params.set('year', debouncedYear);
+            if (areaFilter) params.set('area', areaFilter);
+            if (gcFilter.size > 0) params.set('categoryIds', [...gcFilter].join(','));
             const res = await fetch(`/api/admin/gallery?${params}`);
             if (!res.ok) return;
             const data = await res.json();
@@ -90,14 +94,14 @@ export default function AdminPage() {
         } finally {
             setGalleryLoading(false);
         }
-    }, [debouncedYear]);
+    }, [debouncedYear, areaFilter, gcFilter]);
 
-    // 연도 필터 바뀌면 처음부터 다시 로드
+    // 필터 바뀌면 처음부터 다시 로드
     useEffect(() => {
         setGallery([]);
         setGalleryCursor(null);
         fetchGalleryPage(null, true);
-    }, [debouncedYear, fetchGalleryPage]);
+    }, [debouncedYear, areaFilter, gcFilter, fetchGalleryPage]);
 
     // 문법 카테고리 트리 로드 (갤러리 카드의 문법 체크 모달용)
     useEffect(() => {
@@ -1012,18 +1016,85 @@ export default function AdminPage() {
                         최근 등록 문항 갤러리
                     </h2>
 
-                    {/* 연도 필터 */}
-                    <div className="mb-4 flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 max-w-md">
-                        <span className="text-xs font-bold text-slate-500 ml-1">연도</span>
-                        <input
-                            type="number"
-                            value={yearFilter}
-                            onChange={(e) => setYearFilter(e.target.value)}
-                            placeholder="예: 2025 (비우면 전체)"
-                            className="flex-1 text-sm px-2 py-1.5 border border-slate-200 rounded text-slate-900 focus:outline-none focus:border-teal-500"
-                        />
-                        {yearFilter && (
-                            <button onClick={() => setYearFilter('')} className="text-xs font-bold text-slate-400 hover:text-slate-700">×</button>
+                    {/* 필터: 연도 + 영역 + (문법일 때) 문법 카테고리 */}
+                    <div className="mb-4 bg-white p-3 rounded-xl border border-slate-200 space-y-3">
+                        {/* 연도 + 영역 한 줄 */}
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">연도</span>
+                            <input
+                                type="number"
+                                value={yearFilter}
+                                onChange={(e) => setYearFilter(e.target.value)}
+                                placeholder="예: 2025 (비우면 전체)"
+                                className="w-40 text-sm px-2 py-1.5 border border-slate-200 rounded text-slate-900 focus:outline-none focus:border-teal-500"
+                            />
+                            {yearFilter && (
+                                <button onClick={() => setYearFilter('')} className="text-xs font-bold text-slate-400 hover:text-slate-700">×</button>
+                            )}
+
+                            <div className="w-px h-6 bg-slate-200" />
+
+                            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">영역</span>
+                            {(['', '문법', '독서', '문학', '화작', '언매'] as const).map(a => (
+                                <button
+                                    key={a || 'all'}
+                                    onClick={() => { setAreaFilter(a); if (a !== '문법' && a !== '언매') setGcFilter(new Set()); }}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${
+                                        areaFilter === a
+                                            ? 'bg-teal-600 text-white'
+                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                    }`}
+                                >
+                                    {a || '전체'}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* 문법(또는 언매) 선택 시 문법 카테고리 체크박스 */}
+                        {(areaFilter === '문법' || areaFilter === '언매') && grammarTree.length > 0 && (
+                            <div className="border-t border-slate-100 pt-3">
+                                <div className="text-xs font-black text-purple-700 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    문법 카테고리 <span className="font-medium text-slate-400">(체크한 것만 표시 · 여러 개 OR)</span>
+                                    {gcFilter.size > 0 && (
+                                        <button
+                                            onClick={() => setGcFilter(new Set())}
+                                            className="ml-auto text-[10px] font-bold text-slate-500 hover:text-slate-800 bg-slate-100 px-2 py-0.5 rounded"
+                                        >
+                                            전체 해제
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    {grammarTree.map((root: any) => (
+                                        <div key={root.id}>
+                                            <div className="text-[11px] font-black text-slate-600 mb-1">{root.name}</div>
+                                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1">
+                                                {(root.children || []).map((c: any) => {
+                                                    const checked = gcFilter.has(c.id);
+                                                    return (
+                                                        <label key={c.id} className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded cursor-pointer ${
+                                                            checked ? 'bg-purple-100 text-purple-900 font-bold' : 'hover:bg-slate-100 text-slate-700'
+                                                        }`}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={checked}
+                                                                onChange={() => setGcFilter(prev => {
+                                                                    const next = new Set(prev);
+                                                                    if (next.has(c.id)) next.delete(c.id);
+                                                                    else next.add(c.id);
+                                                                    return next;
+                                                                })}
+                                                                className="accent-purple-600"
+                                                            />
+                                                            {c.name}
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         )}
                     </div>
 
