@@ -146,33 +146,26 @@ function FloatingCartBar() {
     if (pathname?.startsWith('/exam-builder')) return null;
 
     const count = exam.items.length;
+    // 담긴 문항이 없으면 표시하지 않음 (홈 nav나 뒤로 버튼과 겹치지 않게)
+    if (count === 0) return null;
 
     return (
-        <div className="fixed top-4 left-4 z-[60] pointer-events-none">
+        // 좌측 하단으로 이동해서 상단 헤더/뒤로 버튼과 겹치지 않게 함
+        <div className="fixed bottom-6 left-6 z-[60] pointer-events-none">
             <Link
                 href="/exam-builder"
-                className={`pointer-events-auto group flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border transition-all duration-200 ${
-                    count > 0
-                        ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white border-teal-500/30 shadow-teal-500/30 hover:scale-105'
-                        : 'bg-white/90 backdrop-blur text-slate-500 border-slate-200 hover:bg-white'
-                }`}
+                className="pointer-events-auto group flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border bg-gradient-to-r from-teal-600 to-emerald-600 text-white border-teal-500/30 shadow-teal-500/30 hover:scale-105 transition-all duration-200"
             >
                 <div className="relative">
                     <ShoppingBag className="w-5 h-5" strokeWidth={2.5} />
-                    {count > 0 && (
-                        <span className="absolute -top-2 -right-2 min-w-[20px] h-[20px] bg-amber-400 text-slate-900 rounded-full text-[11px] font-black flex items-center justify-center px-1 ring-2 ring-white">
-                            {count}
-                        </span>
-                    )}
+                    <span className="absolute -top-2 -right-2 min-w-[20px] h-[20px] bg-amber-400 text-slate-900 rounded-full text-[11px] font-black flex items-center justify-center px-1 ring-2 ring-white">
+                        {count}
+                    </span>
                 </div>
                 <div className="text-sm font-black tracking-tight">
-                    {count > 0 ? (
-                        <>담은 문항 <span className="text-amber-200">{count}</span>개 · 출제하기 →</>
-                    ) : (
-                        <>시험지 만들기</>
-                    )}
+                    담은 문항 <span className="text-amber-200">{count}</span>개 · 출제하기 →
                 </div>
-                {count > 0 && <Sparkles className="w-4 h-4 text-amber-200 group-hover:rotate-12 transition-transform" />}
+                <Sparkles className="w-4 h-4 text-amber-200 group-hover:rotate-12 transition-transform" />
             </Link>
         </div>
     );
