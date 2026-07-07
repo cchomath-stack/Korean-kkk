@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin } from '@/lib/session';
 
-const PAGE_SIZE = 30;
+const HARD_LIMIT = 200; // 정렬 다양화 위해 커서 대신 상위 200개만 로드
 
 export async function GET(request: NextRequest) {
     if (!(await requireAdmin())) {
@@ -10,8 +10,6 @@ export async function GET(request: NextRequest) {
     }
     try {
         const { searchParams } = new URL(request.url);
-        const cursorParam = searchParams.get('cursor');
-        const cursor = cursorParam ? parseInt(cursorParam, 10) : null;
         const yearParam = searchParams.get('year');
         const year = yearParam ? parseInt(yearParam, 10) : null;
         const area = (searchParams.get('area') || '').trim();
@@ -20,8 +18,9 @@ export async function GET(request: NextRequest) {
             .split(',')
             .map(s => parseInt(s, 10))
             .filter(n => !Number.isNaN(n));
+        const sort = (searchParams.get('sort') || 'recent').trim();
+        const dir: 'asc' | 'desc' = searchParams.get('dir') === 'asc' ? 'asc' : 'desc';
 
-        // 문항(Question) 필터: area/year는 지문 or 문항 어느 쪽이든 매칭.
         const ands: any[] = [];
         if (year && !Number.isNaN(year)) {
             ands.push({
@@ -46,14 +45,49 @@ export async function GET(request: NextRequest) {
         }
         const where: any = ands.length > 0 ? { AND: ands } : {};
 
+        // 정렬. null 값은 항상 마지막으로 배치.
+        let orderBy: any;
+        switch (sort) {
+            case 'imageNo':
+                orderBy = [
+                    { imageNo: { sort: dir, nulls: 'last' } },
+                    { id: 'desc' },
+                ];
+                break;
+            case 'sourceKey':
+                orderBy = [
+                    { sourceKey: { sort: dir, nulls: 'last' } },
+                    { id: 'desc' },
+                ];
+                break;
+            case 'examDate':
+                // 연도·월 순. passage 있는 것 우선 (passage.year/month) → 단독 문제(question.year/month)
+                orderBy = [
+                    { passage: { year: { sort: dir, nulls: 'last' } } },
+                    { passage: { month: { sort: dir, nulls: 'last' } } },
+                    { year: { sort: dir, nulls: 'last' } },
+                    { month: { sort: dir, nulls: 'last' } },
+                    { id: 'desc' },
+                ];
+                break;
+            case 'passage':
+                // 지문별 묶음: passageId 오름 (같은 지문끼리 뭉침) → 문항번호 오름
+                orderBy = [
+                    { passageId: { sort: 'asc', nulls: 'last' } },
+                    { questionNo: { sort: 'asc', nulls: 'last' } },
+                    { id: 'desc' },
+                ];
+                break;
+            case 'recent':
+            default:
+                orderBy = [{ id: dir }];
+                break;
+        }
+
         const questions = await prisma.question.findMany({
             where,
-            orderBy: { id: 'desc' },
-            take: PAGE_SIZE + 1, // 다음 페이지 존재 여부 확인용
-            ...(cursor && !Number.isNaN(cursor) && {
-                cursor: { id: cursor },
-                skip: 1, // cursor 자체는 제외
-            }),
+            orderBy,
+            take: HARD_LIMIT,
             include: {
                 passage: true,
                 tags: { include: { tag: true } },
@@ -61,13 +95,15 @@ export async function GET(request: NextRequest) {
             },
         });
 
-        const hasMore = questions.length > PAGE_SIZE;
-        const items = hasMore ? questions.slice(0, PAGE_SIZE) : questions;
-        const nextCursor = hasMore ? items[items.length - 1].id : null;
-
-        return NextResponse.json({ items, nextCursor, hasMore });
-    } catch (error) {
+        return NextResponse.json({
+            items: questions,
+            total: questions.length,
+            limit: HARD_LIMIT,
+            hasMore: false,
+            nextCursor: null,
+        });
+    } catch (error: any) {
         console.error('Gallery Fetch Error:', error);
-        return NextResponse.json({ error: '목록 조회 실패' }, { status: 500 });
+        return NextResponse.json({ error: '목록 조회 실패', detail: error?.message }, { status: 500 });
     }
 }

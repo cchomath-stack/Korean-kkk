@@ -58,13 +58,13 @@ export default function AdminPage() {
         }, 0);
     };
 
-    // 갤러리 상태 (무한스크롤 + 연도/영역/문법카테고리 필터)
+    // 갤러리 상태 (연도/영역/문법카테고리 필터 + 정렬)
     const [yearFilter, setYearFilter] = useState('');
     const [debouncedYear, setDebouncedYear] = useState('');
     const [areaFilter, setAreaFilter] = useState<string>(''); // '' | 문법 | 독서 | 문학 | 화작 | 언매
     const [gcFilter, setGcFilter] = useState<Set<number>>(new Set()); // 선택된 grammar category ids
-    const [galleryCursor, setGalleryCursor] = useState<number | null>(null);
-    const [galleryHasMore, setGalleryHasMore] = useState(false);
+    const [sortKey, setSortKey] = useState<'recent' | 'imageNo' | 'sourceKey' | 'examDate' | 'passage'>('recent');
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
     const [galleryLoading, setGalleryLoading] = useState(false);
     const [grammarTree, setGrammarTree] = useState<any[]>([]);
 
@@ -74,34 +74,31 @@ export default function AdminPage() {
         return () => clearTimeout(t);
     }, [yearFilter]);
 
-    // 갤러리 로드 (커서 기반 — append, 또는 처음부터 다시)
-    const fetchGalleryPage = useCallback(async (cursor: number | null, replace: boolean) => {
+    // 갤러리 로드 (한 번에 최대 200개)
+    const fetchGalleryPage = useCallback(async () => {
         setGalleryLoading(true);
         try {
             const params = new URLSearchParams();
-            if (cursor) params.set('cursor', String(cursor));
             if (debouncedYear) params.set('year', debouncedYear);
             if (areaFilter) params.set('area', areaFilter);
             if (gcFilter.size > 0) params.set('categoryIds', [...gcFilter].join(','));
+            params.set('sort', sortKey);
+            params.set('dir', sortDir);
             const res = await fetch(`/api/admin/gallery?${params}`);
             if (!res.ok) return;
             const data = await res.json();
-            setGallery((prev) => replace ? data.items : [...prev, ...data.items]);
-            setGalleryCursor(data.nextCursor);
-            setGalleryHasMore(data.hasMore);
+            setGallery(data.items);
         } catch (e) {
             console.error('Gallery fetch error', e);
         } finally {
             setGalleryLoading(false);
         }
-    }, [debouncedYear, areaFilter, gcFilter]);
+    }, [debouncedYear, areaFilter, gcFilter, sortKey, sortDir]);
 
-    // 필터 바뀌면 처음부터 다시 로드
+    // 필터/정렬 바뀌면 다시 로드
     useEffect(() => {
-        setGallery([]);
-        setGalleryCursor(null);
-        fetchGalleryPage(null, true);
-    }, [debouncedYear, areaFilter, gcFilter, fetchGalleryPage]);
+        fetchGalleryPage();
+    }, [fetchGalleryPage]);
 
     // 문법 카테고리 트리 로드 (갤러리 카드의 문법 체크 모달용)
     useEffect(() => {
@@ -118,9 +115,7 @@ export default function AdminPage() {
 
     // 호환용 fetchGallery (저장 후 처음부터 reload)
     const fetchGallery = useCallback(() => {
-        setGallery([]);
-        setGalleryCursor(null);
-        fetchGalleryPage(null, true);
+        fetchGalleryPage();
     }, [fetchGalleryPage]);
 
     // 우측 슬라이드 수정 패널
@@ -1048,6 +1043,32 @@ export default function AdminPage() {
                                     {a || '전체'}
                                 </button>
                             ))}
+
+                            <div className="w-px h-6 bg-slate-200" />
+
+                            {/* 정렬 */}
+                            <span className="text-xs font-black text-slate-500 uppercase tracking-wider">정렬</span>
+                            <select
+                                value={sortKey}
+                                onChange={(e) => setSortKey(e.target.value as any)}
+                                className="text-sm px-2 py-1.5 border border-slate-200 rounded text-slate-900 bg-white focus:outline-none focus:border-teal-500 font-bold"
+                            >
+                                <option value="recent">등록순</option>
+                                <option value="imageNo">이미지번호</option>
+                                <option value="sourceKey">모고키워드</option>
+                                <option value="examDate">연도·월</option>
+                                <option value="passage">지문별 묶음</option>
+                            </select>
+                            <button
+                                onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                                disabled={sortKey === 'passage'}
+                                className="px-2 py-1.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-sm font-black text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={sortKey === 'passage' ? '지문별 묶음은 방향 고정' : (sortDir === 'asc' ? '오름차순 → 내림차순' : '내림차순 → 오름차순')}
+                            >
+                                {sortKey === 'recent'
+                                    ? (sortDir === 'desc' ? '최신 ↓' : '오래된 ↑')
+                                    : (sortDir === 'asc' ? '↑ 작은순' : '↓ 큰순')}
+                            </button>
                         </div>
 
                         {/* 문법(또는 언매) 선택 시 문법 카테고리 체크박스 */}
@@ -1228,13 +1249,14 @@ export default function AdminPage() {
                         })}
                     </div>
 
-                    {/* 무한스크롤 sentinel + 상태 표시 */}
-                    <InfiniteScrollSentinel
-                        hasMore={galleryHasMore}
-                        loading={galleryLoading}
-                        cursor={galleryCursor}
-                        onIntersect={(c) => fetchGalleryPage(c, false)}
-                    />
+                    {/* 표시 개수 + 로딩 */}
+                    <div className="mt-6 flex justify-center text-xs font-bold text-slate-400">
+                        {galleryLoading ? (
+                            <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> 불러오는 중…</span>
+                        ) : (
+                            <span>{gallery.length}개 표시 (최대 200개 · 더 좁히려면 필터 사용)</span>
+                        )}
+                    </div>
                 </section>
             </div>
 
