@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronLeft, Download, Loader2, AlertCircle, Pencil, CheckCircle2, Undo2 } from 'lucide-react';
+import { Download, Loader2, AlertCircle, Pencil, CheckCircle2, Undo2 } from 'lucide-react';
+import { BackButton } from '@/components/BackButton';
 import { ExamPaper, type ExamHydrated, type ExamHydratedItem } from '@/components/ExamPaper';
 
 type OptsPatch = {
@@ -242,9 +243,7 @@ export default function ExamPreviewPage() {
             <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
                 <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
-                        <Link href="/exam-builder" className="p-2 hover:bg-slate-100 rounded-xl text-slate-600">
-                            <ChevronLeft className="w-5 h-5" />
-                        </Link>
+                        <BackButton variant="icon" fallback="/exam-builder" />
                         <div>
                             <h1 className="text-lg font-black text-slate-900">미리보기</h1>
                             <p className="text-xs font-bold text-slate-400">

@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, Loader2, Inbox, Download, Check, CircleDot, Trash2, FileText, Phone } from 'lucide-react';
+import { Loader2, Inbox, Download, Check, CircleDot, Trash2, FileText, Phone } from 'lucide-react';
+import { BackButton } from '@/components/BackButton';
 
 type WrongNote = {
     id: number;
@@ -75,9 +76,7 @@ export default function WrongNotesAdminPage() {
             <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
                 <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Link href="/" className="p-2 hover:bg-slate-100 rounded-xl text-slate-600">
-                            <ChevronLeft className="w-5 h-5" />
-                        </Link>
+                        <BackButton variant="icon" />
                         <div>
                             <h1 className="text-lg font-black text-slate-900">오답노트 요청</h1>
                             <p className="text-xs font-bold text-slate-400">학생 제출 목록 · 인쇄용 PDF</p>

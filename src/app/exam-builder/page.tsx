@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { AddToCartButton, useExamCart } from '@/components/ExamCart';
 import { ImageAdjustModal } from '@/components/ImageAdjustModal';
+import { BackButton } from '@/components/BackButton';
 
 type HydratedItem = {
     id: number;
@@ -188,9 +189,7 @@ export default function ExamBuilderPage() {
             <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
                 <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
-                        <Link href="/admin" className="p-2 hover:bg-slate-100 rounded-xl text-slate-600">
-                            <ChevronLeft className="w-5 h-5" />
-                        </Link>
+                        <BackButton variant="icon" fallback="/admin" />
                         <div>
                             <h1 className="text-lg font-black text-slate-900">시험지 만들기</h1>
                             <p className="text-xs font-bold text-slate-400">담은 문항 {itemCount}개</p>

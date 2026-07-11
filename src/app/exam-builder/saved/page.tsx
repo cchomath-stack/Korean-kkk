@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, FileText, Eye, Trash2, Loader2, Inbox, Share2, Copy, Check, ExternalLink } from 'lucide-react';
+import { FileText, Eye, Trash2, Loader2, Inbox, Share2, Copy, Check, ExternalLink } from 'lucide-react';
+import { BackButton } from '@/components/BackButton';
 
 type SavedExam = {
     id: number;
@@ -75,9 +76,7 @@ export default function SavedExamsPage() {
             <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
                 <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
-                        <Link href="/exam-builder" className="p-2 hover:bg-slate-100 rounded-xl text-slate-600">
-                            <ChevronLeft className="w-5 h-5" />
-                        </Link>
+                        <BackButton variant="icon" fallback="/exam-builder" />
                         <div>
                             <h1 className="text-lg font-black text-slate-900">저장된 시험지</h1>
                             <p className="text-xs font-bold text-slate-400">출제 완료된 시험지 {exams.length}개</p>
