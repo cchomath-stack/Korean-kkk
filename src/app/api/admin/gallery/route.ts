@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin } from '@/lib/session';
 
-const HARD_LIMIT = 200; // 정렬 다양화 위해 커서 대신 상위 200개만 로드
+const PAGE_SIZE = 50; // 한 번에 50개씩
 
 export async function GET(request: NextRequest) {
     if (!(await requireAdmin())) {
@@ -10,6 +10,8 @@ export async function GET(request: NextRequest) {
     }
     try {
         const { searchParams } = new URL(request.url);
+        const offsetParam = searchParams.get('offset');
+        const offset = offsetParam ? Math.max(0, parseInt(offsetParam, 10)) : 0;
         const yearParam = searchParams.get('year');
         const year = yearParam ? parseInt(yearParam, 10) : null;
         const area = (searchParams.get('area') || '').trim();
@@ -61,7 +63,6 @@ export async function GET(request: NextRequest) {
                 ];
                 break;
             case 'examDate':
-                // 연도·월 순. passage 있는 것 우선 (passage.year/month) → 단독 문제(question.year/month)
                 orderBy = [
                     { passage: { year: { sort: dir, nulls: 'last' } } },
                     { passage: { month: { sort: dir, nulls: 'last' } } },
@@ -71,7 +72,6 @@ export async function GET(request: NextRequest) {
                 ];
                 break;
             case 'passage':
-                // 지문별 묶음: passageId 오름 (같은 지문끼리 뭉침) → 문항번호 오름
                 orderBy = [
                     { passageId: { sort: 'asc', nulls: 'last' } },
                     { questionNo: { sort: 'asc', nulls: 'last' } },
@@ -84,23 +84,29 @@ export async function GET(request: NextRequest) {
                 break;
         }
 
-        const questions = await prisma.question.findMany({
-            where,
-            orderBy,
-            take: HARD_LIMIT,
-            include: {
-                passage: true,
-                tags: { include: { tag: true } },
-                grammarCategories: { include: { category: { select: { id: true, name: true, parentId: true } } } },
-            },
-        });
+        const [questions, total] = await Promise.all([
+            prisma.question.findMany({
+                where,
+                orderBy,
+                skip: offset,
+                take: PAGE_SIZE + 1, // 다음 페이지 존재 여부 확인용
+                include: {
+                    passage: true,
+                    tags: { include: { tag: true } },
+                    grammarCategories: { include: { category: { select: { id: true, name: true, parentId: true } } } },
+                },
+            }),
+            offset === 0 ? prisma.question.count({ where }) : Promise.resolve(null),
+        ]);
+
+        const hasMore = questions.length > PAGE_SIZE;
+        const items = hasMore ? questions.slice(0, PAGE_SIZE) : questions;
 
         return NextResponse.json({
-            items: questions,
-            total: questions.length,
-            limit: HARD_LIMIT,
-            hasMore: false,
-            nextCursor: null,
+            items,
+            hasMore,
+            nextOffset: hasMore ? offset + PAGE_SIZE : null,
+            total, // 첫 페이지 요청 시에만 총 개수 (다음 요청부터는 null)
         });
     } catch (error: any) {
         console.error('Gallery Fetch Error:', error);

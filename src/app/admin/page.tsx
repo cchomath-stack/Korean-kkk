@@ -58,7 +58,7 @@ export default function AdminPage() {
         }, 0);
     };
 
-    // 갤러리 상태 (연도/영역/문법카테고리 필터 + 정렬)
+    // 갤러리 상태 (연도/영역/문법카테고리 필터 + 정렬 + 무한스크롤)
     const [yearFilter, setYearFilter] = useState('');
     const [debouncedYear, setDebouncedYear] = useState('');
     const [areaFilter, setAreaFilter] = useState<string>(''); // '' | 문법 | 독서 | 문학 | 화작 | 언매
@@ -67,6 +67,8 @@ export default function AdminPage() {
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
     const [galleryLoading, setGalleryLoading] = useState(false);
     const [grammarTree, setGrammarTree] = useState<any[]>([]);
+    const [galleryOffset, setGalleryOffset] = useState<number | null>(0); // null = 더 로드할 것 없음
+    const [galleryTotal, setGalleryTotal] = useState<number | null>(null);
 
     // 연도 필터 debounce
     useEffect(() => {
@@ -74,8 +76,8 @@ export default function AdminPage() {
         return () => clearTimeout(t);
     }, [yearFilter]);
 
-    // 갤러리 로드 (한 번에 최대 200개)
-    const fetchGalleryPage = useCallback(async () => {
+    // 갤러리 로드 — offset === 0 이면 처음부터, > 0 이면 추가 로드
+    const fetchGalleryPage = useCallback(async (offset: number) => {
         setGalleryLoading(true);
         try {
             const params = new URLSearchParams();
@@ -84,10 +86,13 @@ export default function AdminPage() {
             if (gcFilter.size > 0) params.set('categoryIds', [...gcFilter].join(','));
             params.set('sort', sortKey);
             params.set('dir', sortDir);
+            params.set('offset', String(offset));
             const res = await fetch(`/api/admin/gallery?${params}`);
             if (!res.ok) return;
             const data = await res.json();
-            setGallery(data.items);
+            setGallery(prev => offset === 0 ? data.items : [...prev, ...data.items]);
+            setGalleryOffset(data.nextOffset);
+            if (offset === 0 && typeof data.total === 'number') setGalleryTotal(data.total);
         } catch (e) {
             console.error('Gallery fetch error', e);
         } finally {
@@ -95,10 +100,14 @@ export default function AdminPage() {
         }
     }, [debouncedYear, areaFilter, gcFilter, sortKey, sortDir]);
 
-    // 필터/정렬 바뀌면 다시 로드
+    // 필터/정렬 바뀌면 처음부터 다시 로드
     useEffect(() => {
-        fetchGalleryPage();
-    }, [fetchGalleryPage]);
+        setGallery([]);
+        setGalleryOffset(0);
+        setGalleryTotal(null);
+        fetchGalleryPage(0);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [debouncedYear, areaFilter, gcFilter, sortKey, sortDir]);
 
     // 문법 카테고리 트리 로드 (갤러리 카드의 문법 체크 모달용)
     useEffect(() => {
@@ -115,7 +124,9 @@ export default function AdminPage() {
 
     // 호환용 fetchGallery (저장 후 처음부터 reload)
     const fetchGallery = useCallback(() => {
-        fetchGalleryPage();
+        setGallery([]);
+        setGalleryOffset(0);
+        fetchGalleryPage(0);
     }, [fetchGalleryPage]);
 
     // 우측 슬라이드 수정 패널
@@ -1249,14 +1260,18 @@ export default function AdminPage() {
                         })}
                     </div>
 
-                    {/* 표시 개수 + 로딩 */}
-                    <div className="mt-6 flex justify-center text-xs font-bold text-slate-400">
-                        {galleryLoading ? (
-                            <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> 불러오는 중…</span>
-                        ) : (
-                            <span>{gallery.length}개 표시 (최대 200개 · 더 좁히려면 필터 사용)</span>
-                        )}
-                    </div>
+                    {/* 무한 스크롤 sentinel */}
+                    <InfiniteScrollSentinel
+                        hasMore={galleryOffset !== null}
+                        loading={galleryLoading}
+                        cursor={galleryOffset}
+                        onIntersect={(off) => { if (off !== null) fetchGalleryPage(off); }}
+                    />
+                    {galleryTotal !== null && (
+                        <div className="text-center text-[11px] text-slate-400 font-bold pb-4">
+                            전체 {galleryTotal}개 중 {gallery.length}개 표시
+                        </div>
+                    )}
                 </section>
             </div>
 
