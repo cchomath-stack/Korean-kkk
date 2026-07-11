@@ -29,15 +29,38 @@ export function QuestionImageEditor({
     const drawingRef = useRef(false);
     const startRef = useRef<{ x: number; y: number } | null>(null);
 
-    const relCoords = (e: React.MouseEvent | MouseEvent) => {
-        const wrap = wrapRef.current;
+    // 이미지가 object-contain으로 letterbox 됐을 때 실제 이미지 콘텐츠 영역 계산
+    // (엘리먼트 영역과 실제 이미지가 그려진 영역이 다를 수 있음)
+    const contentBounds = () => {
         const img = imgRef.current;
-        if (!wrap || !img) return { x: 0, y: 0 };
-        const wrapRect = wrap.getBoundingClientRect();
-        const imgRect = img.getBoundingClientRect();
-        // 이미지가 wrap 내부에서 object-contain으로 놓였을 때 실제 이미지 영역 안의 상대 좌표를 (0~1)로
-        const x = ((e as MouseEvent).clientX - imgRect.left) / imgRect.width;
-        const y = ((e as MouseEvent).clientY - imgRect.top) / imgRect.height;
+        if (!img) return null;
+        const rect = img.getBoundingClientRect();
+        const nw = img.naturalWidth;
+        const nh = img.naturalHeight;
+        if (!nw || !nh) {
+            // 자연 크기 아직 모름 → 엘리먼트 그대로
+            return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, offsetInElX: 0, offsetInElY: 0 };
+        }
+        const scale = Math.min(rect.width / nw, rect.height / nh);
+        const displayW = nw * scale;
+        const displayH = nh * scale;
+        const offsetInElX = (rect.width - displayW) / 2;   // element 내에서 콘텐츠 시작 x
+        const offsetInElY = (rect.height - displayH) / 2;
+        return {
+            left: rect.left + offsetInElX,
+            top: rect.top + offsetInElY,
+            width: displayW,
+            height: displayH,
+            offsetInElX,
+            offsetInElY,
+        };
+    };
+
+    const relCoords = (e: React.MouseEvent | MouseEvent) => {
+        const b = contentBounds();
+        if (!b) return { x: 0, y: 0 };
+        const x = ((e as MouseEvent).clientX - b.left) / b.width;
+        const y = ((e as MouseEvent).clientY - b.top) / b.height;
         return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
     };
 
@@ -206,18 +229,29 @@ export function QuestionImageEditor({
                                     draggable={false}
                                     className="w-full h-auto max-h-[60vh] object-contain block pointer-events-none"
                                 />
-                                {rect && imgRef.current && (
-                                    <div
-                                        className="absolute border-2 border-teal-500 bg-teal-500/20"
-                                        style={{
-                                            left: `${imgRef.current.offsetLeft + rect.u1 * imgRef.current.clientWidth}px`,
-                                            top: `${imgRef.current.offsetTop + rect.v1 * imgRef.current.clientHeight}px`,
-                                            width: `${(rect.u2 - rect.u1) * imgRef.current.clientWidth}px`,
-                                            height: `${(rect.v2 - rect.v1) * imgRef.current.clientHeight}px`,
-                                            pointerEvents: 'none',
-                                        }}
-                                    />
-                                )}
+                                {rect && imgRef.current && (() => {
+                                    // 이미지가 letterbox 됐을 때 실제 콘텐츠 영역 기준으로 오버레이 위치 계산
+                                    const img = imgRef.current;
+                                    const nw = img.naturalWidth || img.clientWidth;
+                                    const nh = img.naturalHeight || img.clientHeight;
+                                    const scale = Math.min(img.clientWidth / nw, img.clientHeight / nh);
+                                    const displayW = nw * scale;
+                                    const displayH = nh * scale;
+                                    const offX = (img.clientWidth - displayW) / 2;
+                                    const offY = (img.clientHeight - displayH) / 2;
+                                    return (
+                                        <div
+                                            className="absolute border-2 border-teal-500 bg-teal-500/20"
+                                            style={{
+                                                left: `${img.offsetLeft + offX + rect.u1 * displayW}px`,
+                                                top: `${img.offsetTop + offY + rect.v1 * displayH}px`,
+                                                width: `${(rect.u2 - rect.u1) * displayW}px`,
+                                                height: `${(rect.v2 - rect.v1) * displayH}px`,
+                                                pointerEvents: 'none',
+                                            }}
+                                        />
+                                    );
+                                })()}
                             </div>
                         </>
                     ) : (
