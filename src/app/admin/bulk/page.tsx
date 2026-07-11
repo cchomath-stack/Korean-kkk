@@ -153,7 +153,12 @@ export default function BulkAdminPage() {
     }, [cards]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const imgRef = useRef<HTMLImageElement>(null);
+    // 모든 페이지 이미지 ref 를 페이지 번호 → HTMLImageElement 로 저장 (stacked 뷰용)
+    const imgRefs = useRef<Map<number, HTMLImageElement>>(new Map());
+    const setImgRef = (pageNum: number) => (el: HTMLImageElement | null) => {
+        if (el) imgRefs.current.set(pageNum, el);
+        else imgRefs.current.delete(pageNum);
+    };
     const pdfScrollRef = useRef<HTMLDivElement>(null);
 
     // Ctrl/⌘ + 휠 → PDF 줌만 조절 (브라우저 전체 줌 차단)
@@ -489,22 +494,24 @@ export default function BulkAdminPage() {
     const current = pages.find((p) => p.pageNum === currentPage);
     const currentBoxes = useMemo(() => boxes.filter((b) => b.pageNum === currentPage), [boxes, currentPage]);
 
-    // 마우스 → 원본 픽셀 좌표
-    const eventToImageCoord = (e: React.MouseEvent): { x: number; y: number } | null => {
-        const img = imgRef.current;
-        if (!img || !current) return null;
+    // 마우스 → 특정 페이지의 원본 픽셀 좌표
+    const eventToImageCoord = (e: React.MouseEvent | MouseEvent, pageNum: number): { x: number; y: number } | null => {
+        const img = imgRefs.current.get(pageNum);
+        const page = pages.find((p) => p.pageNum === pageNum);
+        if (!img || !page) return null;
         const rect = img.getBoundingClientRect();
-        const sx = current.width / rect.width;
-        const sy = current.height / rect.height;
+        const sx = page.width / rect.width;
+        const sy = page.height / rect.height;
         return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
     };
 
-    const onMouseDown = (e: React.MouseEvent) => {
-        if (drawMode === 'IDLE' || !current) return;
+    const onMouseDown = (e: React.MouseEvent, pageNum: number) => {
+        if (drawMode === 'IDLE') return;
         if (e.button !== 0) return;
-        const p = eventToImageCoord(e);
+        const p = eventToImageCoord(e, pageNum);
         if (!p) return;
         e.preventDefault();
+        setCurrentPage(pageNum); // 클릭한 페이지를 '활성' 페이지로
         const id = uid();
         let type: BoxType, groupId: string, isExtension = false;
         const active = activeGroupIdRef.current;
@@ -517,7 +524,7 @@ export default function BulkAdminPage() {
         } else {
             type = 'QUESTION'; groupId = active ?? id;
         }
-        setDrafting({ id, type, pageNum: currentPage, groupId, isExtension, x: p.x, y: p.y, w: 0, h: 0 });
+        setDrafting({ id, type, pageNum, groupId, isExtension, x: p.x, y: p.y, w: 0, h: 0 });
     };
 
     // 박스 그리는 중 마우스 좌표 추적 (자동 스크롤용)
@@ -528,7 +535,7 @@ export default function BulkAdminPage() {
     const onMouseMove = (e: React.MouseEvent) => {
         if (!drafting) return;
         mousePosRef.current = { x: e.clientX, y: e.clientY };
-        const p = eventToImageCoord(e);
+        const p = eventToImageCoord(e, drafting.pageNum);
         if (!p) return;
         setDrafting({ ...drafting, w: p.x - drafting.x, h: p.y - drafting.y });
     };
@@ -544,8 +551,9 @@ export default function BulkAdminPage() {
             const mouse = mousePosRef.current;
             const container = pdfScrollRef.current;
             const cur = draftingRef.current;
-            const img = imgRef.current;
-            if (mouse && container && cur && img && current) {
+            const page = cur ? pages.find((p) => p.pageNum === cur.pageNum) : null;
+            const img = cur ? imgRefs.current.get(cur.pageNum) : null;
+            if (mouse && container && cur && img && page) {
                 const rect = container.getBoundingClientRect();
                 let dy = 0;
                 if (mouse.y < rect.top + EDGE) {
@@ -558,11 +566,10 @@ export default function BulkAdminPage() {
                 if (dy !== 0) {
                     const before = container.scrollTop;
                     container.scrollTop = Math.max(0, container.scrollTop + dy);
-                    // 실제 스크롤이 발생했을 때만 drafting 업데이트
                     if (container.scrollTop !== before) {
                         const imgRect = img.getBoundingClientRect();
-                        const sx = current.width / imgRect.width;
-                        const sy = current.height / imgRect.height;
+                        const sx = page.width / imgRect.width;
+                        const sy = page.height / imgRect.height;
                         const px = (mouse.x - imgRect.left) * sx;
                         const py = (mouse.y - imgRect.top) * sy;
                         setDrafting((d) => d ? ({ ...d, w: px - d.x, h: py - d.y }) : null);
@@ -573,10 +580,10 @@ export default function BulkAdminPage() {
         };
         raf = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(raf);
-    }, [isDrafting, current]);
+    }, [isDrafting, pages]);
 
     const onMouseUp = async () => {
-        if (!drafting || !current) return;
+        if (!drafting) return;
         const norm: Box = {
             ...drafting,
             x: drafting.w < 0 ? drafting.x + drafting.w : drafting.x,
@@ -605,7 +612,10 @@ export default function BulkAdminPage() {
             setQuestionMetas((prev) => ({ ...prev, [norm.id]: { tags: [] } }));
         }
 
-        ocrQueueRef.current = ocrQueueRef.current.then(() => processBox(norm, current));
+        const pageForBox = pages.find((p) => p.pageNum === norm.pageNum);
+        if (pageForBox) {
+            ocrQueueRef.current = ocrQueueRef.current.then(() => processBox(norm, pageForBox));
+        }
     };
 
     const processBox = async (box: Box, page: RenderedPage) => {
@@ -905,7 +915,13 @@ export default function BulkAdminPage() {
                             const cnt = boxes.filter((b) => b.pageNum === p.pageNum).length;
                             const savedCnt = cards.filter((c) => c.pageNum === p.pageNum && c.status === 'saved').length;
                             return (
-                                <button key={p.pageNum} onClick={() => setCurrentPage(p.pageNum)}
+                                <button
+                                    key={p.pageNum}
+                                    onClick={() => {
+                                        setCurrentPage(p.pageNum);
+                                        const el = pdfScrollRef.current?.querySelector(`[data-page-num="${p.pageNum}"]`);
+                                        (el as HTMLElement | null)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                    }}
                                     className={`w-full rounded border-2 overflow-hidden block transition relative ${
                                         p.pageNum === currentPage ? 'border-teal-500 ring-2 ring-teal-200'
                                             : 'border-slate-200 hover:border-slate-400'
@@ -934,9 +950,7 @@ export default function BulkAdminPage() {
                     <main ref={pdfScrollRef} className="flex-1 overflow-auto bg-slate-100 flex flex-col items-center">
                         <div className="sticky top-0 z-30 w-full px-4 py-3 bg-slate-100/95 backdrop-blur flex flex-col items-center gap-2 shadow-sm">
                             <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg shadow-sm border flex-wrap justify-center">
-                                <button onClick={goPrev} disabled={currentPage <= 1} className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronLeft size={16} /></button>
-                                <span className="text-sm font-medium text-slate-700 w-20 text-center">{currentPage} / {pages.length}</span>
-                                <button onClick={goNext} disabled={currentPage >= pages.length} className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-30"><ChevronRight size={16} /></button>
+                                <span className="text-sm font-medium text-slate-700 px-2">전체 {pages.length} 페이지 · 아래로 스크롤</span>
                                 <div className="w-px h-6 bg-slate-200 mx-2" />
                                 <ModeButton active={drawMode === 'PASSAGE'} color="blue" icon={<BookOpen size={14} />} label="새 지문 (1)" onClick={() => setDrawMode('PASSAGE')} />
                                 <ModeButton active={drawMode === 'PASSAGE_EXTEND'} color="indigo" icon={<Plus size={14} />} label="지문 이어 (2)" onClick={() => setDrawMode('PASSAGE_EXTEND')} disabled={!activeGroupId} />
@@ -983,30 +997,50 @@ export default function BulkAdminPage() {
                             </div>
                         </div>
 
-                        {current ? (
-                            <div
-                                className="relative select-none my-4"
-                                style={{ width: `${zoom * 100}%`, maxWidth: 'none' }}
-                            >
-                                <img ref={imgRef} src={current.dataUrl} alt={`page-${currentPage}`} className="w-full shadow-lg bg-white block" draggable={false} />
-                                <svg
-                                    className={`absolute inset-0 w-full h-full ${drawMode === 'IDLE' ? 'cursor-default' : 'cursor-crosshair'}`}
-                                    onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
-                                    onMouseLeave={() => drafting && setDrafting(null)}
-                                    viewBox={`0 0 ${current.width} ${current.height}`} preserveAspectRatio="none"
-                                >
-                                    {currentBoxes.map((b) => {
-                                        const card = cards.find((c) => c.id === b.id);
-                                        return <BoxRect key={b.id} box={b}
-                                            active={b.groupId === activeGroupId && card?.status !== 'saved'}
-                                            status={card?.status}
-                                            onDelete={deleteCard} />;
-                                    })}
-                                    {drafting && drafting.pageNum === currentPage && <BoxRect box={drafting} dashed />}
-                                </svg>
-                            </div>
-                        ) : (
+                        {pages.length === 0 ? (
                             <div className="text-slate-400 mt-20 flex items-center gap-2"><Loader2 className="animate-spin" size={16} />렌더링 중...</div>
+                        ) : (
+                            pages.map((page) => {
+                                const pageBoxes = boxes.filter((b) => b.pageNum === page.pageNum);
+                                return (
+                                    <div
+                                        key={page.pageNum}
+                                        data-page-num={page.pageNum}
+                                        className="relative select-none my-4"
+                                        style={{ width: `${zoom * 100}%`, maxWidth: 'none' }}
+                                    >
+                                        {/* 페이지 라벨 */}
+                                        <div className="absolute -left-10 top-0 text-xs font-black text-slate-400 select-none">
+                                            p.{page.pageNum}
+                                        </div>
+                                        <img
+                                            ref={setImgRef(page.pageNum)}
+                                            src={page.dataUrl}
+                                            alt={`page-${page.pageNum}`}
+                                            className="w-full shadow-lg bg-white block"
+                                            draggable={false}
+                                        />
+                                        <svg
+                                            className={`absolute inset-0 w-full h-full ${drawMode === 'IDLE' ? 'cursor-default' : 'cursor-crosshair'}`}
+                                            onMouseDown={(e) => onMouseDown(e, page.pageNum)}
+                                            onMouseMove={onMouseMove}
+                                            onMouseUp={onMouseUp}
+                                            onMouseLeave={() => drafting && setDrafting(null)}
+                                            viewBox={`0 0 ${page.width} ${page.height}`}
+                                            preserveAspectRatio="none"
+                                        >
+                                            {pageBoxes.map((b) => {
+                                                const card = cards.find((c) => c.id === b.id);
+                                                return <BoxRect key={b.id} box={b}
+                                                    active={b.groupId === activeGroupId && card?.status !== 'saved'}
+                                                    status={card?.status}
+                                                    onDelete={deleteCard} />;
+                                            })}
+                                            {drafting && drafting.pageNum === page.pageNum && <BoxRect box={drafting} dashed />}
+                                        </svg>
+                                    </div>
+                                );
+                            })
                         )}
                     </main>
                 </div>
