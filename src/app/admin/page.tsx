@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Save, Scissors, Type, Home, Image as ImageIcon } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Save, Scissors, Type, Home, Image as ImageIcon, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AddToCartButton } from '@/components/ExamCart';
 import { QuestionImageEditor } from '@/components/QuestionImageEditor';
@@ -69,12 +69,19 @@ export default function AdminPage() {
     const [grammarTree, setGrammarTree] = useState<any[]>([]);
     const [galleryOffset, setGalleryOffset] = useState<number | null>(0); // null = 더 로드할 것 없음
     const [galleryTotal, setGalleryTotal] = useState<number | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
+    const [dupOnly, setDupOnly] = useState(false); // 같은 모고키워드 중복 있는 것만 표시
 
-    // 연도 필터 debounce
+    // 연도/검색어 필터 debounce
     useEffect(() => {
         const t = setTimeout(() => setDebouncedYear(yearFilter.trim()), 350);
         return () => clearTimeout(t);
     }, [yearFilter]);
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 300);
+        return () => clearTimeout(t);
+    }, [searchQuery]);
 
     // 갤러리 로드 — offset === 0 이면 처음부터, > 0 이면 추가 로드
     const fetchGalleryPage = useCallback(async (offset: number) => {
@@ -84,6 +91,8 @@ export default function AdminPage() {
             if (debouncedYear) params.set('year', debouncedYear);
             if (areaFilter) params.set('area', areaFilter);
             if (gcFilter.size > 0) params.set('categoryIds', [...gcFilter].join(','));
+            if (debouncedQuery) params.set('q', debouncedQuery);
+            if (dupOnly) params.set('dupOnly', '1');
             params.set('sort', sortKey);
             params.set('dir', sortDir);
             params.set('offset', String(offset));
@@ -98,16 +107,16 @@ export default function AdminPage() {
         } finally {
             setGalleryLoading(false);
         }
-    }, [debouncedYear, areaFilter, gcFilter, sortKey, sortDir]);
+    }, [debouncedYear, areaFilter, gcFilter, sortKey, sortDir, debouncedQuery, dupOnly]);
 
-    // 필터/정렬 바뀌면 처음부터 다시 로드
+    // 필터/정렬/검색 바뀌면 처음부터 다시 로드
     useEffect(() => {
         setGallery([]);
         setGalleryOffset(0);
         setGalleryTotal(null);
         fetchGalleryPage(0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [debouncedYear, areaFilter, gcFilter, sortKey, sortDir]);
+    }, [debouncedYear, areaFilter, gcFilter, sortKey, sortDir, debouncedQuery, dupOnly]);
 
     // 문법 카테고리 트리 로드 (갤러리 카드의 문법 체크 모달용)
     useEffect(() => {
@@ -1022,8 +1031,43 @@ export default function AdminPage() {
                         최근 등록 문항 갤러리
                     </h2>
 
-                    {/* 필터: 연도 + 영역 + (문법일 때) 문법 카테고리 */}
+                    {/* 필터: 검색 + 연도 + 영역 + (문법일 때) 문법 카테고리 */}
                     <div className="mb-4 bg-white p-3 rounded-xl border border-slate-200 space-y-3">
+                        {/* 검색바 + 중복만 토글 */}
+                        <div className="flex items-center gap-2">
+                            <div className="flex-1 flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2 focus-within:border-teal-500 transition">
+                                <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="본문 · 모고키워드 · 태그 · 문법명 · 정답 (공백으로 여러 개)"
+                                    className="flex-1 text-sm text-slate-900 focus:outline-none bg-transparent"
+                                />
+                                {searchQuery && (
+                                    <button
+                                        onClick={() => setSearchQuery('')}
+                                        className="text-xs font-bold text-slate-400 hover:text-slate-700"
+                                        title="지우기"
+                                    >
+                                        ×
+                                    </button>
+                                )}
+                            </div>
+                            <button
+                                onClick={() => setDupOnly(v => !v)}
+                                className={`px-3 py-2 rounded-lg text-xs font-black flex items-center gap-1.5 border transition ${
+                                    dupOnly
+                                        ? 'bg-amber-500 text-white border-amber-600'
+                                        : 'bg-white text-slate-600 border-slate-200 hover:bg-amber-50 hover:border-amber-300'
+                                }`}
+                                title="같은 모고입력키워드를 가진 문항만 표시"
+                            >
+                                <AlertCircle size={13} />
+                                중복만
+                            </button>
+                        </div>
+
                         {/* 연도 + 영역 한 줄 */}
                         <div className="flex items-center gap-3 flex-wrap">
                             <span className="text-xs font-black text-slate-500 uppercase tracking-wider">연도</span>
@@ -1365,6 +1409,26 @@ function EditQuestionPanel({
         !year && !month && !grade && !sourceKey
     );
 
+    // 같은 sourceKey를 가진 다른 문항 중복 검사
+    const [duplicates, setDuplicates] = React.useState<Array<{ id: number; imageUrl: string; imageNo: number | null; questionNo: number | null }>>([]);
+    React.useEffect(() => {
+        const key = sourceKey.trim();
+        if (skipMockMeta || !/^m\d{8}$/.test(key)) {
+            setDuplicates([]);
+            return;
+        }
+        const t = setTimeout(async () => {
+            try {
+                const res = await fetch(`/api/admin/question/check-duplicate?sourceKey=${encodeURIComponent(key)}&excludeId=${item.id}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setDuplicates(data.duplicates || []);
+                }
+            } catch { /* ignore */ }
+        }, 400);
+        return () => clearTimeout(t);
+    }, [sourceKey, skipMockMeta, item.id]);
+
     // year/month/grade 가 채워지면 sourceKey 앞 8자리(m + gg + yy + mm)를 자동 조립.
     // 마지막 2자리(문항번호)는 기존 sourceKey 값 유지.
     React.useEffect(() => {
@@ -1623,15 +1687,43 @@ function EditQuestionPanel({
                     {/* 문제 번호 */}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="text-xs font-bold text-slate-500 block mb-1">모고입력키워드</label>
+                            <label className="text-xs font-bold text-slate-500 block mb-1 flex items-center gap-1">
+                                모고입력키워드
+                                {duplicates.length > 0 && (
+                                    <span className="text-[10px] font-black text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                                        <AlertCircle size={10} /> 중복 {duplicates.length}개
+                                    </span>
+                                )}
+                            </label>
                             <input
                                 value={sourceKey}
                                 onChange={(e) => setSourceKey(e.target.value)}
                                 placeholder={skipMockMeta ? '(모고 문제 아님)' : '위 메타 선택 후 마지막 2자리(문항)만 입력'}
                                 disabled={skipMockMeta}
-                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-sm text-slate-900 font-mono disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                className={`w-full px-2.5 py-1.5 border rounded text-sm text-slate-900 font-mono disabled:bg-slate-100 disabled:cursor-not-allowed ${
+                                    duplicates.length > 0 ? 'border-amber-400 bg-amber-50' : 'border-slate-300'
+                                }`}
                             />
                             <p className="text-[10px] text-slate-400 mt-0.5">m + 학년(2) + 년(2) + 월(2) + 문항(2) — 예: 고1 23년 11월 17번 → <span className="font-mono">m01231117</span></p>
+                            {duplicates.length > 0 && (
+                                <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                                    <div className="text-[11px] font-black text-amber-800 mb-1.5 flex items-center gap-1">
+                                        <AlertCircle size={12} /> 같은 키워드의 다른 문항이 이미 있어요
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {duplicates.map(d => (
+                                            <div key={d.id} className="flex items-center gap-1.5 bg-white border border-amber-200 rounded px-1.5 py-1">
+                                                <img src={d.imageUrl} alt="" className="w-8 h-8 object-cover rounded bg-slate-100" />
+                                                <div className="text-[10px] text-slate-700 font-bold leading-tight">
+                                                    <div>#{d.id}</div>
+                                                    {d.imageNo != null && <div className="text-slate-500">이미지{d.imageNo}</div>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="text-[10px] text-amber-700 mt-1.5">→ 저장은 가능하지만 중복 여부 다시 확인하세요.</div>
+                                </div>
+                            )}
                         </div>
                         <div>
                             <label className="text-xs font-bold text-slate-500 block mb-1">이미지 문제번호</label>

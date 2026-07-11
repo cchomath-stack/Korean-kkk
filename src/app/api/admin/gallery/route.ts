@@ -22,6 +22,8 @@ export async function GET(request: NextRequest) {
             .filter(n => !Number.isNaN(n));
         const sort = (searchParams.get('sort') || 'recent').trim();
         const dir: 'asc' | 'desc' = searchParams.get('dir') === 'asc' ? 'asc' : 'desc';
+        const q = (searchParams.get('q') || '').trim().slice(0, 100);
+        const dupOnly = searchParams.get('dupOnly') === '1';
 
         const ands: any[] = [];
         if (year && !Number.isNaN(year)) {
@@ -45,6 +47,40 @@ export async function GET(request: NextRequest) {
                 grammarCategories: { some: { categoryId: { in: categoryIds } } },
             });
         }
+        // 키워드 검색: 공백으로 토큰 분리, 각 토큰이 여러 필드 중 하나라도 매칭 (모든 토큰 AND, 필드 OR)
+        if (q) {
+            const tokens = q.split(/[\s,]+/).map(t => t.replace(/^#/, '').trim()).filter(Boolean).slice(0, 10);
+            for (const t of tokens) {
+                ands.push({
+                    OR: [
+                        { ocrText: { contains: t } },
+                        { sourceKey: { contains: t } },
+                        { keywords: { contains: t } },
+                        { answer: { equals: t } },
+                        { difficulty: { equals: t } },
+                        { tags: { some: { tag: { name: { contains: t } } } } },
+                        { grammarCategories: { some: { category: { name: { contains: t } } } } },
+                        { passage: { is: { ocrText: { contains: t } } } },
+                        { passage: { is: { area: { contains: t } } } },
+                    ],
+                });
+            }
+        }
+        // 중복만: sourceKey 가 2회 이상 등장하는 것들의 id 목록을 groupBy로 구해서 IN 필터
+        if (dupOnly) {
+            const groups = await prisma.question.groupBy({
+                by: ['sourceKey'],
+                where: { sourceKey: { not: null } },
+                _count: { _all: true },
+                having: { sourceKey: { _count: { gt: 1 } } },
+            });
+            const dupKeys = groups.map(g => g.sourceKey).filter((k): k is string => !!k);
+            if (dupKeys.length === 0) {
+                return NextResponse.json({ items: [], hasMore: false, nextOffset: null, total: 0 });
+            }
+            ands.push({ sourceKey: { in: dupKeys } });
+        }
+
         const where: any = ands.length > 0 ? { AND: ands } : {};
 
         // 정렬. null 값은 항상 마지막으로 배치.
