@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
-import { Crop, Upload, Loader2, X, Check } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { Crop, Upload, Loader2, X, Check, ClipboardPaste } from 'lucide-react';
 
 // 문항 이미지 편집 — 사각형 그려서 자르거나(서버 sharp), 새 파일로 통째 교체.
 // 시험지 만들기의 ImageAdjustModal과 같은 rectangle-drawing UX.
@@ -19,6 +19,8 @@ export function QuestionImageEditor({
     const [mode, setMode] = useState<'crop' | 'replace'>('crop');
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState<string | null>(null);
+    const [isDragOver, setIsDragOver] = useState(false);
+    const [flashPasted, setFlashPasted] = useState(false);
     const wrapRef = useRef<HTMLDivElement>(null);
     const imgRef = useRef<HTMLImageElement>(null);
 
@@ -121,6 +123,49 @@ export function QuestionImageEditor({
         }
     };
 
+    // 클립보드 붙여넣기 (Ctrl/⌘ + V) — 모달 열려 있는 동안 문서 전역에서 캡처
+    useEffect(() => {
+        const onPaste = (e: ClipboardEvent) => {
+            if (busy) return;
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            for (const it of Array.from(items)) {
+                if (it.kind === 'file' && it.type.startsWith('image/')) {
+                    const f = it.getAsFile();
+                    if (f) {
+                        e.preventDefault();
+                        // '다시 올리기' 탭으로 자동 전환하고 시각 피드백
+                        setMode('replace');
+                        setFlashPasted(true);
+                        setTimeout(() => setFlashPasted(false), 800);
+                        doReplace(f);
+                        return;
+                    }
+                }
+            }
+        };
+        window.addEventListener('paste', onPaste);
+        return () => window.removeEventListener('paste', onPaste);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [busy]);
+
+    // 드래그 앤 드롭
+    const onDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(true);
+    };
+    const onDragLeave = () => setIsDragOver(false);
+    const onDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        const f = Array.from(e.dataTransfer.files).find(f => f.type.startsWith('image/'));
+        if (!f) {
+            setErr('이미지 파일만 놓을 수 있어요.');
+            return;
+        }
+        doReplace(f);
+    };
+
     return (
         <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
@@ -177,7 +222,9 @@ export function QuestionImageEditor({
                         </>
                     ) : (
                         <div className="space-y-3">
-                            <p className="text-xs text-slate-500 font-medium">새 이미지 파일(PNG/JPG/WEBP)을 선택하세요. 기존 이미지는 대체됩니다.</p>
+                            <p className="text-xs text-slate-500 font-medium">
+                                새 이미지 파일(PNG/JPG/WEBP)을 <strong>클릭</strong>·<strong>드래그</strong>·<strong>Ctrl+V</strong> 로 넣으세요. 기존 이미지는 대체됩니다.
+                            </p>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <div className="text-[10px] font-black text-slate-500 mb-1">현재</div>
@@ -186,9 +233,37 @@ export function QuestionImageEditor({
                                 </div>
                                 <div className="flex flex-col">
                                     <div className="text-[10px] font-black text-slate-500 mb-1">새 파일</div>
-                                    <label className="flex-1 border-2 border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-teal-400 hover:bg-teal-50 p-6">
-                                        <Upload size={24} className="text-slate-400 mb-2" />
-                                        <span className="text-xs font-bold text-slate-500">클릭해서 파일 선택</span>
+                                    <label
+                                        onDragOver={onDragOver}
+                                        onDragLeave={onDragLeave}
+                                        onDrop={onDrop}
+                                        className={`flex-1 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer p-6 transition-all ${
+                                            isDragOver
+                                                ? 'border-teal-500 bg-teal-50 scale-[1.02]'
+                                                : flashPasted
+                                                ? 'border-amber-500 bg-amber-50'
+                                                : 'border-slate-300 hover:border-teal-400 hover:bg-teal-50'
+                                        }`}
+                                    >
+                                        {busy ? (
+                                            <>
+                                                <Loader2 size={24} className="text-teal-500 animate-spin mb-2" />
+                                                <span className="text-xs font-bold text-teal-600">업로드 중…</span>
+                                            </>
+                                        ) : flashPasted ? (
+                                            <>
+                                                <ClipboardPaste size={24} className="text-amber-500 mb-2" />
+                                                <span className="text-xs font-bold text-amber-700">붙여넣기 감지!</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Upload size={24} className="text-slate-400 mb-2" />
+                                                <span className="text-xs font-bold text-slate-500">
+                                                    {isDragOver ? '여기에 놓기' : '클릭 · 드래그 · Ctrl+V'}
+                                                </span>
+                                                <span className="text-[10px] text-slate-400 mt-1">PNG · JPG · WEBP</span>
+                                            </>
+                                        )}
                                         <input
                                             type="file"
                                             accept="image/png,image/jpeg,image/webp"
@@ -214,7 +289,7 @@ export function QuestionImageEditor({
 
                 <div className="px-5 py-3 border-t bg-slate-50 flex items-center gap-2">
                     <span className="text-[11px] text-slate-500 mr-auto">
-                        {mode === 'crop' ? '드래그해서 사각형 그리기 → 저장' : '파일 선택 즉시 교체됨'}
+                        {mode === 'crop' ? '드래그해서 사각형 그리기 → 저장' : '클릭 · 드래그 · Ctrl+V 붙여넣기 즉시 교체'}
                     </span>
                     <button onClick={onClose} className="px-4 py-2 text-sm font-bold rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700">
                         닫기
